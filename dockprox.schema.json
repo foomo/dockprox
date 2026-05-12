@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "#/$defs/Config",
+  "$defs": {
+    "Config": {
+      "properties": {
+        "listen": {
+          "type": "string",
+          "description": "local proxy listen address (host:port)"
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info"
+        },
+        "upstreams": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Upstream"
+          },
+          "type": "object"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/Rule"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "listen",
+        "logLevel",
+        "upstreams",
+        "rules"
+      ]
+    },
+    "Rule": {
+      "properties": {
+        "match": {
+          "type": "string",
+          "description": "exact host or *.suffix wildcard"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "match",
+        "upstream"
+      ]
+    },
+    "Upstream": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "socks5",
+            "http",
+            "direct"
+          ]
+        },
+        "addr": {
+          "type": "string",
+          "description": "host:port for socks5"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL for http upstreams"
+        },
+        "dns": {
+          "type": "string",
+          "enum": [
+            "local",
+            "remote"
+          ],
+          "default": "local"
+        },
+        "auth": {
+          "$ref": "#/$defs/UpstreamAuth"
+        },
+        "tls": {
+          "$ref": "#/$defs/UpstreamTLS"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "UpstreamAuth": {
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "username",
+        "password"
+      ]
+    },
+    "UpstreamTLS": {
+      "properties": {
+        "insecureSkipVerify": {
+          "type": "boolean"
+        },
+        "caFile": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  }
+}

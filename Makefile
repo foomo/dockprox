@@ -122,15 +122,29 @@ upgrade:
 
 ### Documentation
 
+.PHONY: docs.cli
+## Generate CLI markdown reference (docs/reference/cli)
+docs.cli:
+	@echo "〉generate cli docs"
+	@rm -rf docs/reference/cli
+	@mkdir -p docs/reference/cli
+	@go run ./cmd/dockprox-docs --out docs/reference/cli
+
+.PHONY: docs.schema
+## Generate JSON schema (dockprox.schema.json)
+docs.schema:
+	@echo "〉generate dockprox.schema.json"
+	@go run ./cmd/dockprox-schema --out dockprox.schema.json
+
 .PHONY: docs
 ## Open docs
-docs:
+docs: docs.cli docs.schema
 	@echo "〉starting docs"
 	@cd docs && bun install && bun run dev
 
 .PHONY: docs.build
-## Open docs
-docs.build:
+## Build docs site
+docs.build: docs.cli docs.schema
 	@echo "〉building docs"
 	@cd docs && bun install && bun run build
 
@@ -151,9 +165,10 @@ help: w=\033[0;90m
 help: e=\033[0m
 help:
 	@echo "$(g)"
-	@echo "  ┓    ┓  "
-	@echo "┏┓┣┓┏┓┏┣┓╋"
-	@echo "┗┛┗┛┗┻┗┛┗┗"
+	@echo " ┓   ┓"
+	@echo "┏┫┏┓┏┃┏┏┓┏┓┏┓┓┏"
+	@echo "┗┻┗┛┗┛┗┣┛┛ ┗┛┛┗"
+	@echo "       ┛"
 	@echo "with ❤ foomo by bestbytes"
 	@echo "$(e)"
 	@echo "$(b)Usage:$(e)\n  make [task]"
