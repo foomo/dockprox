@@ -10,8 +10,89 @@
 
 # dockprox
 
-> Reverse docker proxy with socks5 support
+> Inverse HTTP(S) proxy with SOCKS5 support — direct by default, route only what you choose.
 
+## Overview
+
+`dockprox` is a local HTTP(S) proxy that dials destinations directly by default. Only hosts matched by a rule in your config are forwarded through a named upstream — SOCKS5, HTTP CONNECT, or explicit `direct`. It bridges `HTTPS_PROXY`-style clients (which speak HTTP CONNECT) to SOCKS5 upstreams, so tools like `docker pull` and `az acr login` transparently get a SOCKS5 path without needing native support.
+
+## Why
+
+The standard `HTTPS_PROXY` + `NO_PROXY` contract is _"proxy everything; exclude via `NO_PROXY`"_ — opt-out, brittle for long allow-lists. `dockprox` inverts it: opt-in routing per host pattern. Public internet stays direct; only the registries you list (e.g. `*.azurecr.io`, internal Harbor, `ghcr.io`) go through your SOCKS5 jumphost.
+
+See [docs/guide/why.md](docs/guide/why.md) for the full rationale.
+
+## Quick start
+
+Create `dockprox.yaml`:
+
+```yaml
+listen: 127.0.0.1:3128
+logLevel: info
+upstreams:
+  jumphost:
+    type: socks5
+    addr: 127.0.0.1:1080
+rules:
+  - match: "*.azurecr.io"
+    upstream: jumphost
+```
+
+Run:
+
+```shell
+dockprox serve --config dockprox.yaml
+```
+
+Point your client at it:
+
+```shell
+export HTTPS_PROXY=http://127.0.0.1:3128
+docker pull myregistry.azurecr.io/image:tag
+```
+
+Flags can also override or supply config inline:
+
+```shell
+dockprox serve \
+  --listen 127.0.0.1:3128 \
+  --upstream jumphost=socks5://127.0.0.1:1080 \
+  --rule '*.azurecr.io=jumphost'
+```
+
+## Configuration
+
+Top-level keys (`dockprox.schema.json`):
+
+| Key         | Description                                          |
+|-------------|------------------------------------------------------|
+| `listen`    | Local proxy bind address (`host:port`).              |
+| `logLevel`  | `debug` \| `info` \| `warn` \| `error`.              |
+| `upstreams` | Map of named upstream proxies.                       |
+| `rules`     | Ordered list of `match` → `upstream` mappings.       |
+
+Upstream `type` values:
+
+- `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
+- `http` — HTTP CONNECT proxy, `url: http(s)://...`.
+- `direct` — explicit passthrough.
+
+Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).
+
+Full reference: [docs/guide/configuration.md](docs/guide/configuration.md) · JSON Schema: [`dockprox.schema.json`](dockprox.schema.json).
+
+## Use cases
+
+- **Azure Container Registry** — route `*.azurecr.io` through a corporate SOCKS5 jumphost; everything else direct.
+- **GitHub Container Registry** — send `ghcr.io` through SOCKS5 only when on a restricted network.
+- **Private Harbor / internal registries** — proxy internal hosts while keeping Docker Hub and public mirrors direct.
+
+## Documentation
+
+- [Installation](docs/guide/installation.md)
+- [Usage](docs/guide/usage.md)
+- [Configuration](docs/guide/configuration.md)
+- [Why dockprox](docs/guide/why.md)
 
 ## Installation
 
