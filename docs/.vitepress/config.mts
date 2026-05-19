@@ -3,8 +3,9 @@ import { defineConfig } from 'vitepress'
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   title: 'dockprox',
-  description: 'Reverse docker proxy with socks5 support',
+  description: 'Inverse Docker proxy with SOCKS5 support',
 	lang: "en-US",
+	cleanUrls: true,
 	lastUpdated: true,
 	appearance: "dark",
 	ignoreDeadLinks: false,
