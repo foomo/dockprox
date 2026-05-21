@@ -25,3 +25,7 @@ go install github.com/foomo/dockprox/cmd/dockprox@latest
 ```
 
 Requires Go 1.26+.
+
+## macOS menu bar app
+
+The `dockprox` binary includes a macOS tray app — see [Menu bar app](./menubar.md).

@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   title: 'dockprox',
-  description: 'Inverse Docker proxy with SOCKS5 support',
+  description: 'Inverse HTTP(S) proxy with SOCKS5 support',
 	lang: "en-US",
 	cleanUrls: true,
 	lastUpdated: true,
@@ -18,39 +18,35 @@ export default defineConfig({
 		logo: '/logo.png',
 		outline: [2, 4],
     nav: [
-      { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'Rules', link: '/rules/' },
-      { text: 'Architecture', link: '/architecture' },
+      { text: 'Guide', link: '/guide/why' },
+      { text: 'Reference', link: '/reference/config-schema' },
     ],
     sidebar: [
       {
         text: 'Guide',
         items: [
-          { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Why dockprox', link: '/guide/why' },
+          { text: 'Installation', link: '/guide/installation' },
           { text: 'Usage', link: '/guide/usage' },
-          { text: 'Custom Rules', link: '/guide/custom-rules' },
+          { text: 'Configuration', link: '/guide/configuration' },
+          { text: 'Menu bar app (macOS)', link: '/guide/menubar' },
         ],
       },
       {
-        text: 'Rules',
+        text: 'Reference',
         items: [
-          { text: 'Overview', link: '/rules/' },
-          { text: 'Credentials', link: '/rules/credentials' },
-          { text: 'Docker', link: '/rules/docker' },
-          { text: 'Environment', link: '/rules/env' },
-          { text: 'Git', link: '/rules/git' },
-          { text: 'Kubernetes', link: '/rules/kube' },
-          { text: 'OS', link: '/rules/os' },
-          { text: 'PATH', link: '/rules/path' },
-          { text: 'Privacy', link: '/rules/privacy' },
-          { text: 'Shell', link: '/rules/shell' },
-          { text: 'SSH', link: '/rules/ssh' },
-          { text: 'Tools', link: '/rules/tools' },
+          { text: 'Config schema', link: '/reference/config-schema' },
+          {
+            text: 'CLI',
+            collapsed: false,
+            items: [
+              { text: 'dockprox', link: '/reference/cli/dockprox' },
+              { text: 'dockprox serve', link: '/reference/cli/dockprox_serve' },
+              { text: 'dockprox menubar', link: '/reference/cli/dockprox_menubar' },
+              { text: 'dockprox version', link: '/reference/cli/dockprox_version' },
+            ],
+          },
         ],
-      },
-      {
-        text: 'Architecture',
-        link: '/architecture',
       },
 			{
 				text: 'Contributing',
@@ -108,7 +104,7 @@ export default defineConfig({
 			'meta',
 			{
 				property: 'og:description',
-				content: 'Security configuration scanner for developer environments',
+				content: 'Inverse HTTP(S) proxy with SOCKS5 support — direct by default, route only what you choose.',
 			},
 		],
 		['meta', { name: 'twitter:card', content: 'summary_large_image' }],
