@@ -1,5 +1,3 @@
-//go:build safe
-
 package menubar_test
 
 import (
@@ -17,6 +15,7 @@ import (
 
 func writeTestConfig(t *testing.T, dir string) string {
 	t.Helper()
+
 	path := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("listen: 127.0.0.1:0\nlog_level: error\n"), 0o600))
 
@@ -29,19 +28,23 @@ func newTestLogger() *log.Logger {
 
 func waitUntil(t *testing.T, want menubar.State, ctrl *menubar.ProxyController) {
 	t.Helper()
+
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if ctrl.Snapshot().State == want {
 			return
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	t.Fatalf("controller did not reach state %v; got %v", want, ctrl.Snapshot().State)
 }
 
 func TestController_StartFromStoppedReachesRunning(t *testing.T) {
 	cfg := writeTestConfig(t, t.TempDir())
 	ctrl := menubar.New(cfg, newTestLogger())
+
 	t.Cleanup(func() { _ = ctrl.Stop() })
 
 	require.NoError(t, ctrl.Start())
@@ -55,6 +58,7 @@ func TestController_StartFromStoppedReachesRunning(t *testing.T) {
 func TestController_DoubleStartIsNoop(t *testing.T) {
 	cfg := writeTestConfig(t, t.TempDir())
 	ctrl := menubar.New(cfg, newTestLogger())
+
 	t.Cleanup(func() { _ = ctrl.Stop() })
 
 	require.NoError(t, ctrl.Start())
@@ -87,6 +91,7 @@ func TestController_DoubleStopIsNoop(t *testing.T) {
 func TestController_RestartCyclesState(t *testing.T) {
 	cfg := writeTestConfig(t, t.TempDir())
 	ctrl := menubar.New(cfg, newTestLogger())
+
 	t.Cleanup(func() { _ = ctrl.Stop() })
 
 	require.NoError(t, ctrl.Start())
@@ -103,7 +108,7 @@ func TestController_InvalidConfigReachesError(t *testing.T) {
 
 	ctrl := menubar.New(path, newTestLogger())
 	err := ctrl.Start()
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Equal(t, menubar.StateError, ctrl.Snapshot().State)
 	assert.Error(t, ctrl.Snapshot().LastError)
 }
@@ -111,14 +116,17 @@ func TestController_InvalidConfigReachesError(t *testing.T) {
 func TestController_SubscribeReceivesStateChanges(t *testing.T) {
 	cfg := writeTestConfig(t, t.TempDir())
 	ctrl := menubar.New(cfg, newTestLogger())
+
 	t.Cleanup(func() { _ = ctrl.Stop() })
 
 	var (
 		mu     sync.Mutex
 		states []menubar.State
 	)
+
 	unsub := ctrl.Subscribe(func(s menubar.Status) {
 		mu.Lock()
+
 		states = append(states, s.State)
 		mu.Unlock()
 	})
@@ -131,6 +139,7 @@ func TestController_SubscribeReceivesStateChanges(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+
 	assert.Contains(t, states, menubar.StateStarting)
 	assert.Contains(t, states, menubar.StateRunning)
 	assert.Contains(t, states, menubar.StateStopped)

@@ -1,5 +1,3 @@
-//go:build safe
-
 package menubar
 
 import (
@@ -95,6 +93,7 @@ func (c *ProxyController) Subscribe(fn func(Status)) func() {
 	return func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
+
 		if idx < len(c.listeners) {
 			c.listeners[idx] = nil
 		}
@@ -109,6 +108,7 @@ func (c *ProxyController) Start() error {
 		c.mu.Unlock()
 		return nil
 	}
+
 	c.state = StateStarting
 	c.lastErr = nil
 	c.mu.Unlock()
@@ -143,6 +143,7 @@ func (c *ProxyController) Start() error {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+
 	srv, err := proxy.NewServer(ctx, proxy.Options{
 		Listen:   cfg.Listen,
 		Matcher:  m,
@@ -152,6 +153,7 @@ func (c *ProxyController) Start() error {
 	if err != nil {
 		cancel()
 		c.fail(errors.Wrap(err, "server"))
+
 		return err
 	}
 
@@ -174,6 +176,7 @@ func (c *ProxyController) Start() error {
 		}()
 
 		serveErr := srv.Serve(ctx)
+
 		c.mu.Lock()
 		if c.state == StateRunning {
 			if serveErr != nil && ctx.Err() == nil {
@@ -182,6 +185,7 @@ func (c *ProxyController) Start() error {
 			} else {
 				c.state = StateStopped
 			}
+
 			c.listen = ""
 		}
 		c.mu.Unlock()
@@ -198,6 +202,7 @@ func (c *ProxyController) Stop() error {
 		c.mu.Unlock()
 		return nil
 	}
+
 	cancel := c.cancel
 	done := c.done
 	c.mu.Unlock()
@@ -205,6 +210,7 @@ func (c *ProxyController) Stop() error {
 	if cancel != nil {
 		cancel()
 	}
+
 	if done != nil {
 		<-done
 	}

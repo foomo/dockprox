@@ -1,15 +1,18 @@
-//go:build safe && darwin
+//go:build darwin
 
 package menubar
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
 // RevealInFinder opens the macOS Finder with the given path selected.
 // Returns nil if the launch was started (does not wait for completion).
-func RevealInFinder(path string) error {
-	return buildRevealCommand(path).Start()
+func RevealInFinder(ctx context.Context, path string) error {
+	return buildRevealCommand(ctx, path).Start()
 }
 
-func buildRevealCommand(path string) *exec.Cmd {
-	return exec.Command("open", "-R", path)
+func buildRevealCommand(ctx context.Context, path string) *exec.Cmd {
+	return exec.CommandContext(ctx, "open", "-R", path)
 }

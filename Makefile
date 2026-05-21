@@ -32,7 +32,7 @@ endif
 
 .PHONY: check
 ## Run lint & tests
-check: tidy generate lint test.race audit
+check: tidy generate lint.fix test.race audit
 
 .PHONY: lint
 ## Run linter
@@ -77,18 +77,6 @@ build.debug:
 	@echo "〉go build bin/dockprox (debug)"
 	@rm -f bin/dockprox
 	@go build -gcflags "all=-N -l" -o bin/dockprox cmd/dockprox/dockprox.go
-
-.PHONY: build.menubar
-## Build macOS menu bar binary
-build.menubar:
-	@echo "〉go build bin/dockprox-menubar"
-	@rm -f bin/dockprox-menubar
-	@go build -tags=safe -o bin/dockprox-menubar ./cmd/dockprox-menubar
-
-.PHONY: run.menubar
-## Run macOS menu bar app from source
-run.menubar:
-	@go run -tags=safe ./cmd/dockprox-menubar
 
 .PHONY: install
 ## Run go install

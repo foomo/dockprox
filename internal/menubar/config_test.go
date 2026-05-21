@@ -1,5 +1,3 @@
-//go:build safe
-
 package menubar_test
 
 import (
@@ -17,7 +15,7 @@ func TestXDGConfigPath_UsesEnvWhenSet(t *testing.T) {
 	t.Setenv("HOME", "/home/whatever")
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-explicit")
 
-	assert.Equal(t, "/tmp/xdg-explicit/dockprox/config", menubar.XDGConfigPath())
+	assert.Equal(t, "/tmp/xdg-explicit/dockprox/config.yaml", menubar.XDGConfigPath())
 }
 
 func TestXDGConfigPath_FallsBackToHomeConfig(t *testing.T) {
@@ -41,6 +39,7 @@ func TestLookup_PrefersXDGWhenBothExist(t *testing.T) {
 
 	xdgPath := filepath.Join(xdg, "dockprox", "config")
 	dotPath := filepath.Join(home, ".dockprox.yaml")
+
 	require.NoError(t, os.MkdirAll(filepath.Dir(xdgPath), 0o755))
 	require.NoError(t, os.WriteFile(xdgPath, []byte("listen: 127.0.0.1:1\n"), 0o600))
 	require.NoError(t, os.WriteFile(dotPath, []byte("listen: 127.0.0.1:2\n"), 0o600))

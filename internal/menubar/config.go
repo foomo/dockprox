@@ -1,5 +1,3 @@
-//go:build safe
-
 // Package menubar implements the macOS menu bar app that controls a
 // dockprox proxy in-process.
 package menubar
@@ -17,7 +15,7 @@ const (
 	// DotfileName is the home-directory fallback config filename.
 	DotfileName = ".dockprox.yaml"
 	// XDGSubpath is the path under $XDG_CONFIG_HOME (or ~/.config).
-	XDGSubpath = "dockprox/config"
+	XDGSubpath = "dockprox/config.yaml"
 )
 
 // XDGConfigPath returns the absolute config path under XDG_CONFIG_HOME,
@@ -48,7 +46,7 @@ func Lookup() (string, bool) {
 }
 
 // Bootstrap creates a default config. If XDG_CONFIG_HOME is set in env,
-// the file is written under $XDG_CONFIG_HOME/dockprox/config; otherwise
+// the file is written under $XDG_CONFIG_HOME/dockprox/config.yaml; otherwise
 // to $HOME/.dockprox.yaml. Parent directories are created as needed.
 func Bootstrap() (string, error) {
 	var path string

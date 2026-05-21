@@ -1,8 +1,7 @@
-//go:build safe
-
 package menubar
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 
@@ -31,8 +30,10 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger) *T
 	t.applyIcon(ctrl.Snapshot().State)
 	t.rebuildMenu()
 	ctrl.Subscribe(func(s Status) {
-		t.applyIcon(s.State)
-		t.rebuildMenu()
+		application.InvokeAsync(func() {
+			t.applyIcon(s.State)
+			t.rebuildMenu()
+		})
 	})
 
 	return t
@@ -90,7 +91,7 @@ func (t *Tray) rebuildMenu() {
 	menu.AddSeparator()
 
 	menu.Add("Reveal Config in Finder").OnClick(func(_ *application.Context) {
-		if err := RevealInFinder(snap.ConfigPath); err != nil {
+		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})

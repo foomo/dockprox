@@ -1,5 +1,3 @@
-//go:build safe
-
 package menubar
 
 import _ "embed"
