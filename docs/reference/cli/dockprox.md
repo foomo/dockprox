@@ -14,6 +14,7 @@ dockprox is a local HTTP(S) proxy that bypasses traffic by default and routes on
 
 ### SEE ALSO
 
+* [dockprox menubar](dockprox_menubar.md)	 - Run the macOS menu bar app
 * [dockprox serve](dockprox_serve.md)	 - Run the proxy server
 * [dockprox version](dockprox_version.md)	 - Print version information
 

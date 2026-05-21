@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-		"micromark-util-decode-string": "2.0.1",
 		"@catppuccin/vitepress": "0.1.2",
     "vitepress": "1.6.3"
   },

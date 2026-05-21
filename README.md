@@ -153,6 +153,30 @@ Requires Go 1.26+.
 
 </details>
 
+## macOS menu bar app
+
+A native menu bar (tray) app ships as the `menubar` subcommand of the `dockprox` binary. It runs a dockprox proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
+
+Build:
+
+```shell
+make build
+```
+
+Run:
+
+```shell
+bin/dockprox menubar
+```
+
+Run from source:
+
+```shell
+go run -tags=safe ./cmd/dockprox menubar
+```
+
+Config is resolved from `$XDG_CONFIG_HOME/dockprox/config.yaml` (or `~/.config/dockprox/config.yaml` if `XDG_CONFIG_HOME` is unset), falling back to `~/.dockprox.yaml`. If neither exists at launch, a default config is written to one of those locations (XDG when `$XDG_CONFIG_HOME` is set; otherwise the dotfile).
+
 ## How to Contribute
 
 Contributions are welcome! Please read the [contributing guide](CONTRIBUTING.md).
