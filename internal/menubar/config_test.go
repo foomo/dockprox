@@ -22,7 +22,7 @@ func TestXDGConfigPath_FallsBackToHomeConfig(t *testing.T) {
 	t.Setenv("HOME", "/home/whatever")
 	t.Setenv("XDG_CONFIG_HOME", "")
 
-	assert.Equal(t, "/home/whatever/.config/dockprox/config", menubar.XDGConfigPath())
+	assert.Equal(t, "/home/whatever/.config/dockprox/config.yaml", menubar.XDGConfigPath())
 }
 
 func TestDotfilePath(t *testing.T) {
@@ -37,7 +37,7 @@ func TestLookup_PrefersXDGWhenBothExist(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	xdgPath := filepath.Join(xdg, "dockprox", "config")
+	xdgPath := filepath.Join(xdg, "dockprox", "config.yaml")
 	dotPath := filepath.Join(home, ".dockprox.yaml")
 
 	require.NoError(t, os.MkdirAll(filepath.Dir(xdgPath), 0o755))
@@ -79,7 +79,7 @@ func TestBootstrap_XDGWhenEnvSet(t *testing.T) {
 
 	path, err := menubar.Bootstrap()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(xdg, "dockprox", "config"), path)
+	assert.Equal(t, filepath.Join(xdg, "dockprox", "config.yaml"), path)
 
 	cfg, err := config.LoadFile(path)
 	require.NoError(t, err)
