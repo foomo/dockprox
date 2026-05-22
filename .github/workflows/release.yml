@@ -75,6 +75,7 @@ jobs:
             rm -rf "$APP"
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             sed "s/__VERSION__/${V}/g" cmd/dockprox-menubar/Info.plist > "$APP/Contents/Info.plist"
+            iconutil -c icns cmd/dockprox-menubar/icon.iconset -o "$APP/Contents/Resources/icon.icns"
             CARCH="${ARCH}"
             [ "$ARCH" = "amd64" ] && CARCH="x86_64"
             CGO_ENABLED=1 \
