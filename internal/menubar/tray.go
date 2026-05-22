@@ -24,7 +24,7 @@ type Tray struct {
 func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger) *Tray {
 	t := &Tray{
 		app:     app,
-		systray: app.SystemTray.New(),
+		systray: app.NewSystemTray(),
 		ctrl:    ctrl,
 		logger:  logger,
 	}
