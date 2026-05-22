@@ -42,7 +42,6 @@ export default defineConfig({
             items: [
               { text: 'dockprox', link: '/reference/cli/dockprox' },
               { text: 'dockprox serve', link: '/reference/cli/dockprox_serve' },
-              { text: 'dockprox menubar', link: '/reference/cli/dockprox_menubar' },
               { text: 'dockprox version', link: '/reference/cli/dockprox_version' },
             ],
           },

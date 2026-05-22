@@ -43,3 +43,53 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}
+
+  release-menubar:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          check-latest: true
+          go-version-file: go.mod
+
+      - id: app_token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.TOKEN_APP_ID }}
+          private_key: ${{ secrets.TOKEN_APP_PRIVATE_KEY }}
+
+      - name: Build .app bundles
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          V="${VERSION#v}"
+          mkdir -p dist
+          for ARCH in arm64 amd64; do
+            APP="dist/dockprox.app"
+            rm -rf "$APP"
+            mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+            sed "s/__VERSION__/${V}/g" cmd/dockprox-menubar/Info.plist > "$APP/Contents/Info.plist"
+            CARCH="${ARCH}"
+            [ "$ARCH" = "amd64" ] && CARCH="x86_64"
+            CGO_ENABLED=1 \
+            CGO_CFLAGS="-arch ${CARCH}" \
+            CGO_LDFLAGS="-arch ${CARCH}" \
+            GOOS=darwin GOARCH="${ARCH}" \
+              go build -tags=safe -trimpath \
+              -ldflags="-s -w -X github.com/foomo/dockprox/internal/cli.version=${V} -X github.com/foomo/dockprox/internal/cli.commitHash=${{ github.sha }}" \
+              -o "$APP/Contents/MacOS/dockprox-menubar" ./cmd/dockprox-menubar
+            tar -czf "dist/dockprox-menubar_${V}_darwin_${ARCH}.tar.gz" -C dist dockprox.app
+          done
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist/dockprox-menubar_*_darwin_*.tar.gz --clobber
