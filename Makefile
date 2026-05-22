@@ -71,6 +71,17 @@ build:
 	@rm -f bin/dockprox
 	@go build -o bin/dockprox cmd/dockprox/dockprox.go
 
+.PHONY: build.menubar
+## Build macOS menubar app binary (darwin only)
+build.menubar:
+ifeq ($(shell uname),Darwin)
+	@echo "〉go build bin/dockprox-menubar"
+	@rm -f bin/dockprox-menubar
+	@go build -tags=safe -o bin/dockprox-menubar ./cmd/dockprox-menubar
+else
+	$(error build.menubar requires macOS)
+endif
+
 .PHONY: build.debug
 ## Build binary in debug mode
 build.debug:

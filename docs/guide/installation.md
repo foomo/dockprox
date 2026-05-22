@@ -28,4 +28,4 @@ Requires Go 1.26+.
 
 ## macOS menu bar app
 
-The `dockprox` binary includes a macOS tray app — see [Menu bar app](./menubar.md).
+A separate `dockprox-menubar` binary ships the macOS tray app — see [Menu bar app](./menubar.md).

@@ -1,30 +1,24 @@
 # Menu bar app (macOS)
 
-A native menu bar (tray) app ships as the `menubar` subcommand of the `dockprox` binary. It runs a `dockprox` proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
+A native menu bar (tray) app ships as a separate `dockprox-menubar` binary. It runs a `dockprox` proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
 
 ::: info Platform
-The menu bar app is **macOS only**. On other operating systems the `menubar` subcommand is registered but exits with an unsupported-platform error.
+The menu bar app is **macOS only** (Wails-backed, requires cgo + macOS SDK). It is not part of the standard `dockprox` release archives — build it locally on a Mac.
 :::
 
-## Run
+## Build & run
 
-After [installing](./installation.md) `dockprox`:
-
-```sh
-dockprox menubar
-```
-
-Or build and run from this repo:
+From this repo on macOS:
 
 ```sh
-make build
-bin/dockprox menubar
+make build.menubar
+bin/dockprox-menubar
 ```
 
 Or run from source:
 
 ```sh
-go run -tags=safe ./cmd/dockprox menubar
+go run -tags=safe ./cmd/dockprox-menubar
 ```
 
 The proxy auto-starts when the app launches. The tray icon reflects the running / stopped state.
@@ -32,7 +26,7 @@ The proxy auto-starts when the app launches. The tray icon reflects the running 
 ## Flags
 
 ```sh
-dockprox menubar [--config PATH]
+dockprox-menubar [--config PATH]
 ```
 
 | Flag       | Description                                                  |
@@ -68,5 +62,4 @@ Edit the resolved config file with any editor and use **Restart** to apply chang
 
 ## See also
 
-- [`dockprox menubar`](../reference/cli/dockprox_menubar.md) CLI reference
 - [Configuration](./configuration.md)

@@ -1,36 +1,34 @@
 //go:build darwin
 
-package cli
+// Command dockprox-menubar runs the macOS menu bar (tray) app that drives a
+// dockprox proxy in-process.
+package main
 
 import (
+	"flag"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/internal/menubar"
-	"github.com/spf13/cobra"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-func newMenubarCmd() *cobra.Command {
-	var cfgPath string
+func main() {
+	cfgPath := flag.String("config", "", "YAML config file (default: auto-resolve)")
 
-	cmd := &cobra.Command{
-		Use:   "menubar",
-		Short: "Run the macOS menu bar app",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runMenubar(cmd, cfgPath)
-		},
+	flag.Parse()
+
+	if err := run(*cfgPath); err != nil {
+		log.Error("menubar exited with error", "err", err)
+		os.Exit(1)
 	}
-	cmd.Flags().StringVar(&cfgPath, "config", "", "YAML config file (default: auto-resolve)")
-
-	return cmd
 }
 
-func runMenubar(cmd *cobra.Command, cfgPath string) error {
-	logger := log.NewWithOptions(cmd.ErrOrStderr(), log.Options{ReportTimestamp: true})
+func run(cfgPath string) error {
+	logger := log.NewWithOptions(os.Stderr, log.Options{ReportTimestamp: true})
 
 	if cfgPath == "" {
 		resolved, err := menubar.Resolve()
