@@ -50,7 +50,7 @@ func run(cfgPath string) error {
 
 	menubar.NewTray(app, ctrl, logger)
 
-	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+	app.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		if err := ctrl.Start(); err != nil {
 			logger.Warn("auto-start failed", "err", err)
 		}
