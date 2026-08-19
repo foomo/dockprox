@@ -1,5 +1,5 @@
-[![Go Report Card](https://goreportcard.com/badge/github.com/foomo/dockprox?style=flat-square)](https://goreportcard.com/report/github.com/foomo/dockprox)
 [![GoDoc](https://img.shields.io/badge/GoDoc-✓-informational.svg?style=flat-square&logo=go)](https://godoc.org/github.com/foomo/dockprox)
+[![Coverage](https://img.shields.io/codecov/c/github/foomo/dockprox?style=flat-square&logo=github)](https://app.codecov.io/gh/foomo/dockprox)
 [![GitHub Downloads](https://img.shields.io/github/downloads/foomo/dockprox/total.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/foomo/dockprox.svg?style=flat-square&logo=docker)](https://hub.docker.com/r/foomo/dockprox)
 [![GitHub Stars](https://img.shields.io/github/stars/foomo/dockprox.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox)
