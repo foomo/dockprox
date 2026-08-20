@@ -24,19 +24,30 @@ alternative.
 | # | Decision | Rejected alternative |
 |---|----------|---------------------|
 | 1 | Tunnels are both local SOCKS5 listeners **and** rule-referenceable upstreams | listener-only; upstream-only |
-| 2 | SSH targets resolve through `~/.ssh/config` + `SSH_AUTH_SOCK` agent | explicit host/user/key fields in dockprox config |
-| 3 | Strict `~/.ssh/known_hosts` verification, **no opt-out** | an `insecureSkipHostKeyVerification` escape hatch |
-| 4 | Lazy connect: resolve config at startup, defer the SSH handshake to first use | eager connect with a background reconnect supervisor |
+| 2 | SSH targets are declared **inline** in dockprox config: `host`, `port`, `user`, `keyFile`, `keyFilePassphrase`, `agent` | resolving them through `~/.ssh/config` |
+| 3 | Strict host key verification, **no opt-out** | an `insecureSkipHostKeyVerification` escape hatch |
+| 3a | Trusted key from an inline `hostKey` fingerprint, falling back to `~/.ssh/known_hosts` when unset | `known_hosts` only; a configurable `knownHostsFile` path |
+| 4 | Lazy connect: validate config at startup, defer the SSH handshake to first use | eager connect with a background reconnect supervisor |
 | 5 | Drop the global `socks5Listen` added in the previous iteration | keep it alongside tunnel listeners |
 | 6 | Tunnels live under `upstreams` as `type: ssh` | a separate top-level `tunnels:` map |
 
+Decision 2 was reversed mid-brainstorm: an earlier draft delegated to
+`~/.ssh/config`. Inlining makes the config self-contained — it works in Docker
+and CI images that have no `~/.ssh` at all — and drops a dependency
+(`github.com/kevinburke/ssh_config`) along with the target-resolution code.
+The cost is that dockprox no longer inherits a user's existing SSH setup; a
+laptop user must restate `host`/`user`/`keyFile` that `~/.ssh/config` already
+knows.
+
 Decision 3 is the security-relevant one: an unverified host key lets anyone who
 can MITM the bastion read all tunneled traffic, including credentials for the
-internal hosts being proxied to. Registering the key via a normal `ssh <host>`
-login is a one-time cost, so no opt-out is offered.
+internal hosts being proxied to. So there is no opt-out. Decision 3a keeps
+verification possible in both worlds: an inline `hostKey` fingerprint for
+self-contained deploys, and `~/.ssh/known_hosts` (populated by a one-time
+`ssh <host>` login) on a dev machine.
 
-Decision 4's failure mode is deferred *network* errors only. Target resolution
-and key-file readability are checked at startup, so a typo in a host alias still
+Decision 4's failure mode is deferred *network* errors only. Required fields and
+key-file readability are checked at startup, so a typo or an unreadable key still
 fails fast; only the handshake waits for first use.
 
 ## Architecture
@@ -77,15 +88,15 @@ rejected by validation.
 
 Isolates SSH concerns so `pkg/upstream` stays transport plumbing.
 
-### `ResolveTarget(alias string) (Target, error)`
+### `Target`
 
-Parses `~/.ssh/config` via `github.com/kevinburke/ssh_config`, resolving
-`HostName`, `User`, `Port`, `IdentityFile`, and `ProxyJump`. Falls back to
-defaults when no entry matches — `User` from the current user, `Port` 22, the
-alias itself as hostname — so a bare `host: 10.0.0.5` works with no ssh config
-present.
+A plain struct built directly from the `config.Upstream` fields — no file
+parsing, no alias resolution. `Port` defaults to 22 and `User` to the current OS
+user when omitted; everything else comes from config verbatim.
 
-Called for every tunnel at startup. Config errors and unreadable identity files
+A `Validate()` method is called for every tunnel at startup: it checks required
+fields, that `keyFile` (when set) exists and parses as a private key, and that
+`hostKey` (when set) is a well-formed fingerprint. Unreadable keys and typos
 surface before the process claims to be serving.
 
 ### `Client` — lazy connection holder
@@ -103,35 +114,53 @@ supervisor goroutine and no backoff state to go stale across sleep/wake.
 
 ### Authentication
 
-Tried in order:
+Auth methods are assembled from config, in this order:
 
-1. Agent via `SSH_AUTH_SOCK` (`golang.org/x/crypto/ssh/agent`).
-2. Each resolved `IdentityFile`.
+1. `keyFile`, decrypted with `keyFilePassphrase` when that is set
+   (`ssh.ParsePrivateKeyWithPassphrase`, else `ssh.ParsePrivateKey`).
+2. Agent via `SSH_AUTH_SOCK` when `agent: true`
+   (`golang.org/x/crypto/ssh/agent`).
 
-An encrypted key with no agent available produces an error naming the file and
-recommending `ssh-add`. No passphrase prompting: a menubar daemon has no
-terminal to prompt on.
+At least one must be configured; validation rejects an `ssh` upstream with
+neither. An encrypted `keyFile` with no `keyFilePassphrase` and no agent fails at
+startup with an error naming the file, since the passphrase can never be supplied
+later — dockprox does not prompt (a menubar daemon has no terminal).
+
+`keyFilePassphrase` is plaintext-on-disk in the YAML, matching the precedent set
+by the existing `auth.password` on SOCKS5/HTTP upstreams. Env-var interpolation
+is out of scope (see below). Password auth is not supported (decision Q1=C).
 
 ### Host key verification
 
-`golang.org/x/crypto/ssh/knownhosts` against `~/.ssh/known_hosts`. Unknown or
-mismatched keys fail the connection, with the offending fingerprint and the
-`ssh <host>` remedy in the error. No opt-out (decision 3).
+Strict, with two trust sources (decision 3a):
+
+1. When `hostKey` is set, the presented key's fingerprint must equal it exactly.
+   Accepted format is `SHA256:<base64>`, as printed by `ssh-keyscan`
+   piped through `ssh-keygen -lf -`.
+2. Otherwise, `golang.org/x/crypto/ssh/knownhosts` against
+   `~/.ssh/known_hosts`.
+
+Unknown or mismatched keys fail the connection. The error carries the presented
+fingerprint and, in the fallback case, the `ssh <host>` remedy — in the pinned
+case, the expected-vs-presented pair. No opt-out (decision 3).
+
+A missing or unreadable `~/.ssh/known_hosts` when no `hostKey` is pinned is a
+startup error, not a silent accept-anything.
 
 ### ProxyJump
 
-Resolved recursively: dial the jump host's client, `client.DialContext` to the
-next hop, then `ssh.NewClientConn` over that conn. The chain is implemented in
-full because the recursion is the same code as the single-hop case.
+Deferred. With `~/.ssh/config` parsing gone there is no `ProxyJump` directive to
+inherit, and expressing a jump chain inline would mean a nested upstream
+reference — a config-shape question worth its own design. Single-hop only in this
+iteration; see Out of scope.
 
 ### Dependencies
 
 - `golang.org/x/crypto` — `ssh`, `ssh/agent`, `ssh/knownhosts`
-- `github.com/kevinburke/ssh_config` — the maintained fork, `Get`/`GetStrict` API
 
-Both are the standard choices for this work; decision 2 is not implementable
-without them. `.golangci.yaml` uses `modules-download-mode: readonly`, so
-`make tidy` must run before lint.
+One new dependency, down from two: inlining the SSH target (decision 2) removes
+the need for `github.com/kevinburke/ssh_config`. `.golangci.yaml` uses
+`modules-download-mode: readonly`, so `make tidy` must run before lint.
 
 ## Config
 
@@ -139,7 +168,13 @@ without them. `.golangci.yaml` uses `modules-download-mode: readonly`, so
 upstreams:
   jump:
     type: ssh
-    host: jumphost                 # required: ~/.ssh/config alias or hostname
+    host: bastion.example.com      # required: hostname or IP
+    port: 22                       # optional, default 22
+    user: deploy                   # optional, default current OS user
+    keyFile: ~/.ssh/id_ed25519     # key auth; or agent: true, or both
+    keyFilePassphrase: ""          # optional, for an encrypted keyFile
+    agent: false                   # use SSH_AUTH_SOCK
+    hostKey: "SHA256:abc123..."    # optional; falls back to ~/.ssh/known_hosts
     socks5Listen: 127.0.0.1:1080   # optional: expose a local SOCKS5 port
 
 rules:
@@ -147,15 +182,33 @@ rules:
     upstream: jump
 ```
 
-`config.Upstream` gains `Host` and `Socks5Listen`, both `omitempty`. A
+`config.Upstream` gains `Host`, `Port`, `User`, `KeyFile`, `KeyFilePassphrase`,
+`Agent`, `HostKey`, and `Socks5Listen` — all `omitempty` except as noted. A
 `UpstreamSSH = "ssh"` constant joins the existing type constants, and the
 `jsonschema:"enum=..."` tag on `Type` gains `enum=ssh`.
+
+`~` in `keyFile` is expanded against the current user's home directory; a bare
+relative path is resolved against the process working directory.
+
+Note: `Port` as an `int` makes "unset" and `0` indistinguishable in Go's zero
+value, which is fine here — `0` is not a valid port, so both mean "default to
+22".
 
 ### Validation
 
 Added to `Config.Validate` / `Upstream.validate`:
 
 - `type: ssh` requires `host`.
+- `type: ssh` requires at least one of `keyFile` or `agent: true`.
+- `keyFile`, when set, must exist and parse as a private key —
+  with `keyFilePassphrase` if given, without it otherwise. An encrypted key and
+  no passphrase and no agent is an error.
+- `hostKey`, when set, must be a well-formed `SHA256:<base64>` fingerprint.
+- When `hostKey` is unset, `~/.ssh/known_hosts` must be readable.
+- `port`, when set, must be 1–65535.
+- The SSH-only fields (`host`, `port`, `user`, `keyFile`, `keyFilePassphrase`,
+  `agent`, `hostKey`) are **rejected on non-`ssh` upstreams**, mirroring the
+  `socks5Listen` rule below.
 - `socks5Listen`, when set, must parse as `host:port`.
 - `socks5Listen` on a non-`ssh` upstream is **rejected** — it would otherwise be
   silently ignored.
@@ -208,16 +261,19 @@ not surfaced in the tray UI in this iteration.
 
 | Scope | Coverage |
 |-------|----------|
-| `pkg/config` | Table-driven validation: ssh without `host`; `socks5Listen` on an `http` upstream; duplicate `socks5Listen`; unreferenced tunnel with no listener; valid tunnel. Plus the existing example-config test. |
-| `pkg/sshclient` | `ResolveTarget` against a fixture `ssh_config`: aliases, wildcard `Host` patterns, `ProxyJump`, defaults, missing entry. Pure parsing, no network. |
+| `pkg/config` | Table-driven validation: ssh without `host`; ssh with neither `keyFile` nor `agent`; malformed `hostKey`; out-of-range `port`; ssh-only fields on an `http` upstream; `socks5Listen` on an `http` upstream; duplicate `socks5Listen`; unreferenced tunnel with no listener; valid tunnel. Plus the existing example-config test. |
+| `pkg/sshclient` | `Target` defaults (port 22, current user) and `Validate`: generated unencrypted key accepted; encrypted key with correct passphrase accepted; encrypted key with no passphrase and no agent rejected; missing key file rejected; `~` expansion. Fingerprint parsing/comparison against a generated host key. No network. |
 | `pkg/socks5server` | Existing Matcher-path tests keep passing; one new test for the fixed-`Dialer` path. |
 | End-to-end | The test that proves the chain. |
 
 The end-to-end test runs an in-process SSH server (`x/crypto/ssh` supports this)
-with a generated host key and a fixture `known_hosts`, points a tunnel at it,
-then drives a real SOCKS5 client through the listener to a local echo server and
-asserts bytes round-trip. Closing the SSH server's conn mid-test and issuing
-another request covers the lazy-reconnect path.
+with a generated host key, pins that key's fingerprint via `hostKey`, points a
+tunnel at it, then drives a real SOCKS5 client through the listener to a local
+echo server and asserts bytes round-trip. Pinning rather than a fixture
+`known_hosts` keeps the test independent of `$HOME`. Two more cases on the same
+harness: a deliberately wrong `hostKey` must fail the connection (proving
+verification is not vacuous), and closing the SSH server's conn mid-test then
+issuing another request covers the lazy-reconnect path.
 
 Verification: `make check` (tidy + generate + lint + test.race + audit).
 `make generate` regenerates `dockprox.schema.json`; the committed schema must
@@ -230,13 +286,30 @@ jumphost` manually. This feature replaces that workflow, so the page is updated.
 `dockprox.example.yaml` gains a documented `type: ssh` upstream and loses the
 top-level `socks5Listen` block.
 
+Because `hostKey` is new surface, the docs must show how to obtain a
+fingerprint:
+
+```sh
+ssh-keyscan -t ed25519 bastion.example.com 2>/dev/null | ssh-keygen -lf - | awk '{print $2}'
+```
+
+The docs should also note that omitting `hostKey` falls back to
+`~/.ssh/known_hosts`, and that a containerized dockprox almost certainly wants
+the pinned form.
+
 ## Out of scope
 
 - Eager connect with keepalives and backoff. Decision 4 chose lazy; the upgrade
   path is a supervisor goroutine calling `Client.Get` on a timer, and it is
   additive.
-- Inline `user@host:port` in the `host` field. `~/.ssh/config` is where that
-  belongs (decision 2).
-- Passphrase prompting for encrypted keys without an agent.
+- Reading anything from `~/.ssh/config`. Reversed by decision 2. `known_hosts` is
+  the one exception, and only as a fallback when `hostKey` is unset.
+- `ProxyJump` / multi-hop chains. Needs a config shape for nested upstream
+  references; own design.
+- Password authentication (decision Q1=C).
+- Passphrase prompting. `keyFilePassphrase` or an agent, or it fails at startup.
+- Env-var interpolation for secrets (`keyFilePassphrase: ${VAR}`). A broader
+  config-loader feature that would apply to the existing `auth.password` fields
+  too.
 - Surfacing per-tunnel state in the menubar UI.
 - Local/remote port forwards (`-L` / `-R`). Only SOCKS5 (`-D`) is in scope.
