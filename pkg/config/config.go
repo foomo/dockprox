@@ -2,10 +2,11 @@ package config
 
 // Config is the top-level dockprox configuration.
 type Config struct {
-	Listen    string              `json:"listen"    yaml:"listen"    jsonschema:"description=local proxy listen address (host:port)"`
-	LogLevel  string              `json:"logLevel"  yaml:"logLevel"  jsonschema:"enum=debug,enum=info,enum=warn,enum=error,default=info"`
-	Upstreams map[string]Upstream `json:"upstreams" yaml:"upstreams"`
-	Rules     []Rule              `json:"rules"     yaml:"rules"`
+	Listen    string              `json:"listen"            yaml:"listen"            jsonschema:"description=local proxy listen address (host:port)"`
+	LogLevel  string              `json:"logLevel"          yaml:"logLevel"          jsonschema:"enum=debug,enum=info,enum=warn,enum=error,default=info"`
+	LogFile   string              `json:"logFile,omitempty" yaml:"logFile,omitempty" jsonschema:"description=log file path (default: OS cache dir)"`
+	Upstreams map[string]Upstream `json:"upstreams"         yaml:"upstreams"`
+	Rules     []Rule              `json:"rules"             yaml:"rules"`
 }
 
 // Upstream defines a named proxy upstream that rules can reference.

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"maps"
 	"net"
 	"slices"
@@ -51,8 +52,13 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 		return err
 	}
 
-	logger := log.NewWithOptions(cmd.ErrOrStderr(), log.Options{ReportTimestamp: true})
-	logger.SetLevel(logLevelFromString(cfg.LogLevel))
+	logFile, err := config.OpenLogWriter(cfg)
+	if err != nil {
+		return err
+	}
+
+	logger := log.NewWithOptions(io.MultiWriter(cmd.ErrOrStderr(), logFile), log.Options{ReportTimestamp: true})
+	logger.SetLevel(config.LevelFromString(cfg.LogLevel))
 
 	reg, err := upstream.NewRegistry(cfg)
 	if err != nil {
@@ -249,17 +255,4 @@ func parseSSHUpstream(raw string) (config.Upstream, error) {
 	}
 
 	return config.Upstream{Type: config.UpstreamSSH, Host: host, Port: port}, nil
-}
-
-func logLevelFromString(s string) log.Level {
-	switch s {
-	case "debug":
-		return log.DebugLevel
-	case "warn":
-		return log.WarnLevel
-	case "error":
-		return log.ErrorLevel
-	default:
-		return log.InfoLevel
-	}
 }

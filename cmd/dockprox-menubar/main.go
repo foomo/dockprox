@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/internal/menubar"
+	"github.com/foomo/dockprox/pkg/config"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -28,8 +29,6 @@ func main() {
 }
 
 func run(cfgPath string) error {
-	logger := log.NewWithOptions(os.Stderr, log.Options{ReportTimestamp: true})
-
 	if cfgPath == "" {
 		resolved, err := menubar.Resolve()
 		if err != nil {
@@ -38,6 +37,24 @@ func run(cfgPath string) error {
 
 		cfgPath = resolved
 	}
+
+	cfg, err := config.LoadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+
+	logPath, err := config.ResolveLogPath(cfg)
+	if err != nil {
+		return err
+	}
+
+	logWriter, err := config.OpenLogWriter(cfg)
+	if err != nil {
+		return err
+	}
+
+	logger := log.NewWithOptions(logWriter, log.Options{ReportTimestamp: true})
+	logger.SetLevel(config.LevelFromString(cfg.LogLevel))
 
 	ctrl := menubar.New(cfgPath, logger)
 
@@ -48,7 +65,7 @@ func run(cfgPath string) error {
 		},
 	})
 
-	menubar.NewTray(app, ctrl, logger)
+	menubar.NewTray(app, ctrl, logger, logPath)
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		if err := ctrl.Start(); err != nil {

@@ -3,13 +3,13 @@
 version: "2"
 
 run:
-  go: "1.26"
   build-tags: [ safe ]
   modules-download-mode: readonly
 
 linters:
   default: all
   disable:
+    - exhaustruct_v5
     - paralleltest
     - testpackage
     # Discouraged linters

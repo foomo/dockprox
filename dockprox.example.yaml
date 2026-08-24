@@ -11,6 +11,11 @@ listen: 127.0.0.1:8888
 # debug | info | warn | error. Defaults to "info".
 logLevel: info
 
+# Log file path (used by both `dockprox serve` and the menubar app; serve
+# also mirrors output to stderr). Empty (default) uses the OS cache dir
+# (e.g. ~/Library/Caches/dockprox/dockprox.log on macOS).
+logFile: ""
+
 # Named upstreams that rules below can route matched hosts through.
 # Requests to unmatched hosts always dial direct.
 upstreams:

@@ -67,7 +67,7 @@ func yamlFields(t reflect.Type) []string {
 		seen[t] = true
 
 		for f := range t.Fields() {
-			name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
 			if name != "" && name != "-" {
 				fields = append(fields, name)
 			}

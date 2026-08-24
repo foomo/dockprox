@@ -18,6 +18,10 @@
           ],
           "default": "info"
         },
+        "logFile": {
+          "type": "string",
+          "description": "log file path (default: OS cache dir)"
+        },
         "upstreams": {
           "additionalProperties": {
             "$ref": "#/$defs/Upstream"

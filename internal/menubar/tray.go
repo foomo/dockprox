@@ -18,16 +18,18 @@ type Tray struct {
 	systray *application.SystemTray
 	ctrl    *ProxyController
 	logger  *log.Logger
+	logPath string
 }
 
 // NewTray creates the system tray and wires it to the controller.
 // The tray rebuilds its menu and icon whenever the controller's state changes.
-func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger) *Tray {
+func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, logPath string) *Tray {
 	t := &Tray{
 		app:     app,
 		systray: app.SystemTray.New(),
 		ctrl:    ctrl,
 		logger:  logger,
+		logPath: logPath,
 	}
 
 	t.applyIcon(ctrl.Snapshot().State)
@@ -118,6 +120,12 @@ func (t *Tray) rebuildMenu() {
 
 	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
 		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
+			t.logger.Warn("reveal", "err", err)
+		}
+	})
+
+	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
+		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})

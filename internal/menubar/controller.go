@@ -243,6 +243,9 @@ func (c *ProxyController) Start() error {
 	c.mu.Unlock()
 	c.notify()
 
+	c.logger.Info("start", "listen", srv.Addr(), "upstreams", len(cfg.Upstreams),
+		"rules", len(cfg.Rules), "tunnels", len(tunnels))
+
 	for _, h := range tunnels {
 		c.serveTunnel(h, h.ctx)
 	}
@@ -436,6 +439,8 @@ func (c *ProxyController) Stop() error {
 		}
 	}
 	c.mu.Unlock()
+
+	c.logger.Info("stop")
 
 	if cancel != nil {
 		cancel()
