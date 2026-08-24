@@ -25,7 +25,7 @@ func (s *Server) handle(ctx context.Context, client net.Conn) {
 		return
 	}
 
-	method := strings.SplitN(string(peek), " ", 2)[0]
+	method, _, _ := strings.Cut(string(peek), " ")
 	switch method {
 	case http.MethodConnect:
 		s.handleConnect(ctx, client, br, start)

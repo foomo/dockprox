@@ -28,4 +28,8 @@ Requires Go 1.26+.
 
 ## macOS menu bar app
 
-A separate `dockprox-menubar` binary ships the macOS tray app — see [Menu bar app](./menubar.md).
+```sh
+brew install --cask foomo/tap/dockprox-menubar
+```
+
+Or build it yourself from this repo — see [Menu bar app](./menubar.md).

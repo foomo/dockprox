@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,100 @@ func TestValidate_Errors(t *testing.T) {
 			err := tc.c.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.msg) {
 				t.Fatalf("err=%v want substring %q", err, tc.msg)
+			}
+		})
+	}
+}
+
+func sshUp(mut func(*config.Upstream)) config.Upstream {
+	u := config.Upstream{Type: "ssh", Host: "bastion.example.com", KeyFile: "/tmp/id"}
+	if mut != nil {
+		mut(&u)
+	}
+
+	return u
+}
+
+func cfgWith(ups map[string]config.Upstream, rules ...config.Rule) config.Config {
+	return config.Config{Listen: "127.0.0.1:8888", Upstreams: ups, Rules: rules}
+}
+
+func TestValidate_SSHErrors(t *testing.T) {
+	bad := []struct {
+		name string
+		c    config.Config
+		msg  string
+	}{
+		{"ssh without host", cfgWith(
+			map[string]config.Upstream{"j": {Type: "ssh", KeyFile: "/tmp/id", Socks5Listen: "127.0.0.1:1080"}},
+		), "host"},
+		{"ssh without auth", cfgWith(
+			map[string]config.Upstream{"j": {Type: "ssh", Host: "b.example.com", Socks5Listen: "127.0.0.1:1080"}},
+		), "keyFile"},
+		{"malformed hostKey", cfgWith(
+			map[string]config.Upstream{"j": sshUp(func(u *config.Upstream) {
+				u.HostKey = "MD5:aa:bb"
+				u.Socks5Listen = "127.0.0.1:1080"
+			})},
+		), "hostKey"},
+		{"port out of range", cfgWith(
+			map[string]config.Upstream{"j": sshUp(func(u *config.Upstream) {
+				u.Port = 70000
+				u.Socks5Listen = "127.0.0.1:1080"
+			})},
+		), "port"},
+		{"ssh field on http upstream", cfgWith(
+			map[string]config.Upstream{"c": {Type: "http", URL: "http://p:3128", Host: "nope"}},
+		), "host"},
+		{"socks5Listen on http upstream", cfgWith(
+			map[string]config.Upstream{"c": {Type: "http", URL: "http://p:3128", Socks5Listen: "127.0.0.1:1080"}},
+		), "socks5Listen"},
+		{"bad socks5Listen", cfgWith(
+			map[string]config.Upstream{"j": sshUp(func(u *config.Upstream) { u.Socks5Listen = "not-an-addr" })},
+		), "socks5Listen"},
+		{"duplicate socks5Listen", cfgWith(map[string]config.Upstream{
+			"a": sshUp(func(u *config.Upstream) { u.Socks5Listen = "127.0.0.1:1080" }),
+			"b": sshUp(func(u *config.Upstream) { u.Socks5Listen = "127.0.0.1:1080" }),
+		}), "duplicate"},
+		{"dead tunnel config", cfgWith(
+			map[string]config.Upstream{"j": sshUp(nil)},
+		), "unreferenced"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.c.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err=%v want substring %q", err, tc.msg)
+			}
+		})
+	}
+}
+
+func TestValidate_SSHOK(t *testing.T) {
+	good := []struct {
+		name string
+		c    config.Config
+	}{
+		{"tunnel with listener", cfgWith(
+			map[string]config.Upstream{"j": sshUp(func(u *config.Upstream) { u.Socks5Listen = "127.0.0.1:1080" })},
+		)},
+		{"tunnel referenced by rule", cfgWith(
+			map[string]config.Upstream{"j": sshUp(nil)},
+			config.Rule{Match: "*.internal.example.com", Upstream: "j"},
+		)},
+		{"agent auth and pinned host key", cfgWith(
+			map[string]config.Upstream{"j": {
+				Type: "ssh", Host: "b.example.com", Port: 2222, User: "deploy",
+				IdentityAgent: "SSH_AUTH_SOCK",
+				HostKey:       "SHA256:" + base64.RawStdEncoding.EncodeToString(make([]byte, 32)),
+				Socks5Listen:  "127.0.0.1:1080",
+			}},
+		)},
+	}
+	for _, tc := range good {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.c.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
 			}
 		})
 	}

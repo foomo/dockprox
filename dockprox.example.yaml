@@ -1,0 +1,72 @@
+# yaml-language-server: $schema=./dockprox.schema.json
+#
+# Example dockprox configuration. Every field in pkg/config.Config is
+# documented here — see dockprox.schema.json for the authoritative schema
+# (regenerate via `make generate` after changing pkg/config types).
+
+# Local proxy listen address (host:port). Clients point their HTTP(S)
+# proxy settings here.
+listen: 127.0.0.1:8888
+
+# debug | info | warn | error. Defaults to "info".
+logLevel: info
+
+# Log file path (used by both `dockprox serve` and the menubar app; serve
+# also mirrors output to stderr). Empty (default) uses the OS cache dir
+# (e.g. ~/Library/Caches/dockprox/dockprox.log on macOS).
+logFile: ""
+
+# Named upstreams that rules below can route matched hosts through.
+# Requests to unmatched hosts always dial direct.
+upstreams:
+  # SOCKS5 upstream, e.g. an SSH -D tunnel or a corporate SOCKS5 jump host.
+  jump:
+    type: socks5
+    addr: 127.0.0.1:1080          # host:port, required for type: socks5
+    dns: remote                   # local (default) | remote (socks5h-style remote DNS)
+    auth:                         # optional RFC 1929 username/password
+      username: user
+      password: pass
+
+  # HTTP CONNECT upstream, e.g. a corporate HTTP(S) proxy.
+  corp:
+    type: http
+    url: https://proxy.example.com:3128 # required for type: http
+    auth:                                # optional HTTP Basic auth
+      username: user
+      password: pass
+    tls:                                 # optional, only used when url is https://
+      insecureSkipVerify: false
+      caFile: /path/to/ca.pem
+
+  # Direct upstream: dials the target directly from the local host. No
+  # additional fields required.
+  direct:
+    type: direct
+
+  # SSH tunnel. dockprox opens the SSH connection itself (lazily, on first
+  # use) and exposes it as a rule target and/or a local SOCKS5 port.
+  bastion:
+    type: ssh
+    host: bastion.example.com     # required for type: ssh
+    port: 22                      # optional, default 22
+    user: deploy                  # optional, default: current OS user
+    keyFile: ~/.ssh/id_ed25519    # key auth; or identityAgent, or both
+    keyFilePassphrase: ""         # optional, for an encrypted keyFile
+    identityAgent: SSH_AUTH_SOCK  # agent auth: this sentinel, or a socket path
+    # Pinned host key fingerprint. Omit to fall back to ~/.ssh/known_hosts.
+    #   ssh-keyscan -t ed25519 bastion.example.com 2>/dev/null \
+    #     | ssh-keygen -lf - | awk '{print $2}'
+    hostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    socks5Listen: 127.0.0.1:1080  # optional: expose a local SOCKS5 port
+
+# Host-matching rules, evaluated in order. match is either an exact
+# hostname or a leading "*." wildcard suffix. upstream must name an entry
+# from upstreams above.
+rules:
+  - match: "*.azurecr.io"
+    upstream: jump
+  - match: proxy.internal.example.com
+    upstream: corp
+  - match: "*.internal.example.com"
+    upstream: bastion

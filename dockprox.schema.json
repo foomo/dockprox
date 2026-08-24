@@ -18,6 +18,10 @@
           ],
           "default": "info"
         },
+        "logFile": {
+          "type": "string",
+          "description": "log file path (default: OS cache dir)"
+        },
         "upstreams": {
           "additionalProperties": {
             "$ref": "#/$defs/Upstream"
@@ -64,7 +68,8 @@
           "enum": [
             "socks5",
             "http",
-            "direct"
+            "direct",
+            "ssh"
           ]
         },
         "addr": {
@@ -88,6 +93,38 @@
         },
         "tls": {
           "$ref": "#/$defs/UpstreamTLS"
+        },
+        "host": {
+          "type": "string",
+          "description": "ssh: bastion hostname or IP"
+        },
+        "port": {
+          "type": "integer",
+          "description": "ssh: port (default 22)"
+        },
+        "user": {
+          "type": "string",
+          "description": "ssh: login user (default: current OS user)"
+        },
+        "keyFile": {
+          "type": "string",
+          "description": "ssh: private key path"
+        },
+        "keyFilePassphrase": {
+          "type": "string",
+          "description": "ssh: passphrase for an encrypted keyFile"
+        },
+        "identityAgent": {
+          "type": "string",
+          "description": "ssh: SSH_AUTH_SOCK or an agent socket path"
+        },
+        "hostKey": {
+          "type": "string",
+          "description": "ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"
+        },
+        "socks5Listen": {
+          "type": "string",
+          "description": "ssh: local SOCKS5 listen address (host:port)"
         }
       },
       "additionalProperties": false,

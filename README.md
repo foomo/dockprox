@@ -1,5 +1,5 @@
-[![Go Report Card](https://goreportcard.com/badge/github.com/foomo/dockprox?style=flat-square)](https://goreportcard.com/report/github.com/foomo/dockprox)
 [![GoDoc](https://img.shields.io/badge/GoDoc-✓-informational.svg?style=flat-square&logo=go)](https://godoc.org/github.com/foomo/dockprox)
+[![Coverage](https://img.shields.io/codecov/c/github/foomo/dockprox?style=flat-square&logo=github)](https://app.codecov.io/gh/foomo/dockprox)
 [![GitHub Downloads](https://img.shields.io/github/downloads/foomo/dockprox/total.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/foomo/dockprox.svg?style=flat-square&logo=docker)](https://hub.docker.com/r/foomo/dockprox)
 [![GitHub Stars](https://img.shields.io/github/stars/foomo/dockprox.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox)
@@ -14,7 +14,7 @@
 
 ## Overview
 
-`dockprox` is a local HTTP(S) proxy that dials destinations directly by default. Only hosts matched by a rule in your config are forwarded through a named upstream — SOCKS5, HTTP CONNECT, or explicit `direct`. It bridges `HTTPS_PROXY`-style clients (which speak HTTP CONNECT) to SOCKS5 upstreams, so tools like `docker pull` and `az acr login` transparently get a SOCKS5 path without needing native support.
+`dockprox` is a local HTTP(S) proxy that dials destinations directly by default. Only hosts matched by a rule in your config are forwarded through a named upstream — SOCKS5, HTTP CONNECT, an SSH tunnel, or explicit `direct`. It bridges `HTTPS_PROXY`-style clients (which speak HTTP CONNECT) to SOCKS5 upstreams, so tools like `docker pull` and `az acr login` transparently get a SOCKS5 path without needing native support.
 
 ## Why
 
@@ -75,6 +75,7 @@ Upstream `type` values:
 
 - `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
 - `http` — HTTP CONNECT proxy, `url: http(s)://...`.
+- `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `socks5Listen`.
 - `direct` — explicit passthrough.
 
 Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).
@@ -157,7 +158,11 @@ Requires Go 1.26+.
 
 A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macOS only, Wails-backed). It runs a dockprox proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
 
-Build:
+```shell
+brew install --cask foomo/tap/dockprox-menubar
+```
+
+Or build it yourself:
 
 ```shell
 make build.menubar
