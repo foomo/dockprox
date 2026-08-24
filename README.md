@@ -64,12 +64,13 @@ dockprox serve \
 
 Top-level keys (`dockprox.schema.json`):
 
-| Key         | Description                                          |
-|-------------|------------------------------------------------------|
-| `listen`    | Local proxy bind address (`host:port`).              |
-| `logLevel`  | `debug` \| `info` \| `warn` \| `error`.              |
-| `upstreams` | Map of named upstream proxies.                       |
-| `rules`     | Ordered list of `match` → `upstream` mappings.       |
+| Key         | Description                                                              |
+|-------------|--------------------------------------------------------------------------|
+| `listen`    | Local proxy bind address (`host:port`).                                  |
+| `logLevel`  | `debug` \| `info` \| `warn` \| `error`. Defaults to `info`.              |
+| `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/dockprox`). |
+| `upstreams` | Map of named upstream proxies.                                           |
+| `rules`     | Ordered list of `match` → `upstream` mappings.                           |
 
 Upstream `type` values:
 
@@ -112,8 +113,12 @@ See the [foomo/homebrew-tap](https://github.com/foomo/homebrew-tap) repository.
 <summary><b>Docker</b></summary>
 
 ```shell
-docker run --rm foomo/dockprox:latest scan
+docker run --rm -p 3128:3128 \
+  -v "$PWD/dockprox.yaml:/home/dockprox/dockprox.yaml:ro" \
+  foomo/dockprox:latest serve --config dockprox.yaml
 ```
+
+Bind `listen` to `0.0.0.0:3128` in the config so the port is reachable from outside the container.
 
 Multi-arch images (`amd64`, `arm64`) are published to [Docker Hub](https://hub.docker.com/r/foomo/dockprox).
 
@@ -129,7 +134,7 @@ mise use github:foomo/dockprox
 or run directly:
 
 ```shell
-mise x github:foomo/dockprox -- scan
+mise x github:foomo/dockprox -- serve --config dockprox.yaml
 ```
 
 See [mise.jdx.dev](https://mise.jdx.dev).
@@ -158,33 +163,33 @@ Requires Go 1.26+.
 
 A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macOS only, Wails-backed). It runs a dockprox proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
 
-```shell
-brew install --cask foomo/tap/dockprox-menubar
-```
-
-Or build it yourself:
+It is not distributed via Homebrew or the release archives — build it from source:
 
 ```shell
-make build.menubar
-```
-
-Run:
-
-```shell
+make build.menubar   # → bin/dockprox-menubar
 bin/dockprox-menubar
 ```
 
-Run from source:
+To get a proper `.app` bundle (icon, `Info.plist`, ad-hoc code signature):
+
+```shell
+make package.menubar   # → dist/dockprox.app
+open dist/dockprox.app
+```
+
+Run straight from source:
 
 ```shell
 go run -tags=safe ./cmd/dockprox-menubar
 ```
 
+See [docs/guide/menubar.md](docs/guide/menubar.md) for details.
+
 Config is resolved from `$XDG_CONFIG_HOME/dockprox/config.yaml` (or `~/.config/dockprox/config.yaml` if `XDG_CONFIG_HOME` is unset), falling back to `~/.dockprox.yaml`. If neither exists at launch, a default config is written to one of those locations (XDG when `$XDG_CONFIG_HOME` is set; otherwise the dotfile).
 
 ## How to Contribute
 
-Contributions are welcome! Please read the [contributing guide](CONTRIBUTING.md).
+Contributions are welcome! Please read the [contributing guide](docs/CONTRIBUTING.md).
 
 ![Contributors](https://contributors-table.vercel.app/image?repo=foomo/dockprox&width=50&columns=15)
 
