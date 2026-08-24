@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/charmbracelet/log"
+	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -24,18 +25,24 @@ type Tray struct {
 func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger) *Tray {
 	t := &Tray{
 		app:     app,
-		systray: app.NewSystemTray(),
+		systray: app.SystemTray.New(),
 		ctrl:    ctrl,
 		logger:  logger,
 	}
 
 	t.applyIcon(ctrl.Snapshot().State)
 	t.rebuildMenu()
+
 	ctrl.Subscribe(func(s Status) {
 		application.InvokeAsync(func() {
 			t.applyIcon(s.State)
 			t.rebuildMenu()
 		})
+	})
+
+	t.systray.OnRightClick(func() {
+		t.rebuildMenu()
+		t.systray.OpenMenu()
 	})
 
 	return t
@@ -60,57 +67,67 @@ func (t *Tray) rebuildMenu() {
 	snap := t.ctrl.Snapshot()
 	menu := t.app.NewMenu()
 
-	menu.Add(fmt.Sprintf("● %s", snap.State)).SetEnabled(false)
-
 	if snap.State == StateError && snap.LastError != nil {
 		menu.Add(fmt.Sprintf("Error: %s", snap.LastError)).SetEnabled(false)
 	}
 
 	if snap.ListenAddr != "" {
-		menu.Add("Listen: " + snap.ListenAddr).SetEnabled(false)
+		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
 	}
 
-	menu.Add("Config: " + abbreviateHome(snap.ConfigPath)).SetEnabled(false)
+	// Tunnels: read-only status list, one glyph+name row each.
+	if len(snap.Tunnels) > 0 {
+		menu.AddSeparator()
 
+		for _, ts := range snap.Tunnels {
+			glyph := "○"
+			addr := "-"
+
+			if ts.ConnState == sshclient.ConnConnected {
+				glyph = "◉"
+				addr = ts.Addr
+			}
+
+			menu.Add(fmt.Sprintf("%s %s: %s", glyph, ts.Name, addr)).SetEnabled(false)
+		}
+	}
+
+	// Actions grouped together: proxy lifecycle controls.
 	menu.AddSeparator()
 
-	menu.Add("Start").OnClick(func(_ *application.Context) {
-		if err := t.ctrl.Start(); err != nil {
-			t.logger.Warn("start", "err", err)
-		}
-	}).SetEnabled(snap.State == StateStopped || snap.State == StateError)
+	if snap.State == StateRunning {
+		menu.Add("⏹︎ Stop").OnClick(func(_ *application.Context) {
+			_ = t.ctrl.Stop()
+		})
+	} else {
+		menu.Add("▶︎ Start").OnClick(func(_ *application.Context) {
+			if err := t.ctrl.Start(); err != nil {
+				t.logger.Warn("start", "err", err)
+			}
+		})
+	}
 
-	menu.Add("Stop").OnClick(func(_ *application.Context) {
-		_ = t.ctrl.Stop()
-	}).SetEnabled(snap.State == StateRunning)
-
-	menu.Add("Restart").OnClick(func(_ *application.Context) {
+	menu.Add("↺ Restart").OnClick(func(_ *application.Context) {
 		if err := t.ctrl.Restart(); err != nil {
 			t.logger.Warn("restart", "err", err)
 		}
 	}).SetEnabled(snap.State == StateRunning)
 
+	// Config path: click to reveal in Finder.
 	menu.AddSeparator()
 
-	menu.Add("Reveal Config in Finder").OnClick(func(_ *application.Context) {
+	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
 		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
 
+	// Quit isolated at the bottom.
 	menu.AddSeparator()
 
-	menu.Add("Quit dockprox").OnClick(func(_ *application.Context) {
+	menu.Add("⏏︎ Quit").OnClick(func(_ *application.Context) {
 		t.app.Quit()
 	})
 
 	t.systray.SetMenu(menu)
-}
-
-func abbreviateHome(p string) string {
-	if home := homeDir(); home != "" && len(p) > len(home) && p[:len(home)] == home {
-		return "~" + p[len(home):]
-	}
-
-	return p
 }

@@ -85,7 +85,11 @@ jobs:
               go build -tags=safe -trimpath \
               -ldflags="-s -w -X github.com/foomo/dockprox/internal/cli.version=${V} -X github.com/foomo/dockprox/internal/cli.commitHash=${{ github.sha }}" \
               -o "$APP/Contents/MacOS/dockprox-menubar" ./cmd/dockprox-menubar
-            tar -czf "dist/dockprox-menubar_${V}_darwin_${ARCH}.tar.gz" -C dist dockprox.app
+            # TODO: ad-hoc signing only, unsigned for Gatekeeper on other
+            # machines. Swap for `codesign --sign "Developer ID Application: ..."
+            # --options runtime --timestamp` + notarytool once a cert exists.
+            codesign --force --deep --sign - "$APP"
+            ditto -c -k --keepParent "$APP" "dist/dockprox-menubar_${V}_darwin_${ARCH}.zip"
           done
 
       - name: Upload to release
@@ -93,4 +97,49 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           gh release upload "${{ github.ref_name }}" \
-            dist/dockprox-menubar_*_darwin_*.tar.gz --clobber
+            dist/dockprox-menubar_*_darwin_*.zip --clobber
+
+      - name: Update Homebrew cask
+        env:
+          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          V="${VERSION#v}"
+          SHA_ARM64=$(shasum -a 256 "dist/dockprox-menubar_${V}_darwin_arm64.zip" | cut -d' ' -f1)
+          SHA_AMD64=$(shasum -a 256 "dist/dockprox-menubar_${V}_darwin_amd64.zip" | cut -d' ' -f1)
+
+          cat > dockprox-menubar.rb <<EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          cask "dockprox-menubar" do
+            arch arm: "arm64", intel: "amd64"
+
+            version "${V}"
+            sha256 arm:   "${SHA_ARM64}",
+                    intel: "${SHA_AMD64}"
+
+            url "https://github.com/foomo/dockprox/releases/download/v#{version}/dockprox-menubar_#{version}_darwin_#{arch}.zip"
+            name "dockprox"
+            desc "Menu bar app for dockprox, an inverse HTTP(S) proxy with SOCKS5 support"
+            homepage "https://github.com/foomo/dockprox"
+
+            depends_on macos: ">= :big_sur"
+
+            app "dockprox.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.foomo.dockprox.plist",
+            ]
+          end
+          EOF
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/foomo/homebrew-tap.git" tap
+          cp dockprox-menubar.rb tap/dockprox-menubar.rb
+          cd tap
+          git config user.name "foomo-bot"
+          git config user.email "bot@foomo.org"
+          git add dockprox-menubar.rb
+          git diff --cached --quiet || git commit -m "chore: update dockprox-menubar to ${V}"
+          git push

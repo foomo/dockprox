@@ -82,6 +82,22 @@ else
 	$(error build.menubar requires macOS)
 endif
 
+.PHONY: package.menubar
+## Package macOS menubar app into dist/dockprox.app (darwin only)
+package.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
+package.menubar: build.menubar
+ifeq ($(shell uname),Darwin)
+	@echo "〉packaging dist/dockprox.app ($(VERSION))"
+	@rm -rf dist/dockprox.app
+	@mkdir -p dist/dockprox.app/Contents/MacOS dist/dockprox.app/Contents/Resources
+	@iconutil -c icns cmd/dockprox-menubar/icon.iconset -o dist/dockprox.app/Contents/Resources/icon.icns
+	@sed 's/__VERSION__/$(VERSION)/g' cmd/dockprox-menubar/Info.plist > dist/dockprox.app/Contents/Info.plist
+	@cp bin/dockprox-menubar dist/dockprox.app/Contents/MacOS/dockprox-menubar
+	@codesign --force --deep --sign - dist/dockprox.app
+else
+	$(error package.menubar requires macOS)
+endif
+
 .PHONY: build.debug
 ## Build binary in debug mode
 build.debug:
