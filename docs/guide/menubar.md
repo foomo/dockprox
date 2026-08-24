@@ -6,6 +6,12 @@ A native menu bar (tray) app ships as a separate `dockprox-menubar` binary. It r
 The menu bar app is **macOS only** (Wails-backed, requires cgo + macOS SDK). It is not part of the standard `dockprox` release archives — build it locally on a Mac.
 :::
 
+## Install
+
+```sh
+brew install --cask foomo/tap/dockprox-menubar
+```
+
 ## Build & run
 
 From this repo on macOS:

@@ -10,7 +10,7 @@ logLevel: info
 
 upstreams:
   jump:
-    type: socks5        # socks5 | http | direct
+    type: socks5        # socks5 | http | direct | ssh
     addr: 127.0.0.1:1080
     dns: remote         # remote (socks5h) | local
     auth:
@@ -19,6 +19,17 @@ upstreams:
     tls:                # only relevant for https:// upstreams
       insecureSkipVerify: false
       caFile: /etc/dockprox/ca.pem
+
+  bastion:
+    type: ssh
+    host: bastion.example.com   # required
+    port: 22                    # optional, default 22
+    user: deploy                # optional, default: current OS user
+    keyFile: ~/.ssh/id_ed25519  # key auth; or identityAgent, or both
+    keyFilePassphrase: ""       # optional, for an encrypted keyFile
+    identityAgent: SSH_AUTH_SOCK # agent auth: this sentinel, or a socket path
+    hostKey: "SHA256:..."       # pinned fingerprint; falls back to ~/.ssh/known_hosts
+    socks5Listen: 127.0.0.1:1080 # optional: expose a local SOCKS5 port
 
 rules:
   - match: "*.azurecr.io"     # exact host or *.suffix wildcard
@@ -38,3 +49,7 @@ rules:
 ## Precedence
 
 `flags > env (DOCKPROX_*) > stdin/file > defaults`
+
+## See also
+
+- [SSH tunnels](./usage.md#ssh-tunnels)

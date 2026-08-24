@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: dockprox
-  text: Inverse Docker proxy with SOCKS5 support
-  tagline: Bypass everything by default. Forward only the registries you choose, through SOCKS5 or HTTP CONNECT.
+  text: Inverse HTTP(S) proxy with SOCKS5 support
+  tagline: Direct by default. Forward only the hosts you choose, through SOCKS5, HTTP CONNECT, or an SSH tunnel.
   image:
     src: /logo.png
     alt: dockprox
