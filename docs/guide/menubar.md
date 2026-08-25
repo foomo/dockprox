@@ -61,6 +61,7 @@ Parent directories are created as needed.
 | **Start**                 | Start the in-process proxy with the resolved config.                   |
 | **Stop**                  | Stop the running proxy.                                                |
 | **Restart**               | Stop, reload the config from disk, and start again.                    |
+| **Start at Login**        | Toggle launching the app automatically at login — needed since dockprox must be running for a system-wide proxy setup to reach anything. |
 | **Reveal config in Finder** | Open the resolved config file in Finder.                             |
 | **Quit**                  | Stop the proxy and exit the app.                                       |
 
