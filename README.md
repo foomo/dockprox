@@ -22,73 +22,6 @@ The standard `HTTPS_PROXY` + `NO_PROXY` contract is _"proxy everything; exclude 
 
 See [docs/guide/why.md](docs/guide/why.md) for the full rationale.
 
-## Quick start
-
-Create `dockprox.yaml`:
-
-```yaml
-listen: 127.0.0.1:3128
-logLevel: info
-upstreams:
-  jumphost:
-    type: socks5
-    addr: 127.0.0.1:1080
-rules:
-  - match: "*.azurecr.io"
-    upstream: jumphost
-```
-
-Run:
-
-```shell
-dockprox serve --config dockprox.yaml
-```
-
-Point your client at it:
-
-```shell
-export HTTPS_PROXY=http://127.0.0.1:3128
-docker pull myregistry.azurecr.io/image:tag
-```
-
-Flags can also override or supply config inline:
-
-```shell
-dockprox serve \
-  --listen 127.0.0.1:3128 \
-  --upstream jumphost=socks5://127.0.0.1:1080 \
-  --rule '*.azurecr.io=jumphost'
-```
-
-## Configuration
-
-Top-level keys (`dockprox.schema.json`):
-
-| Key         | Description                                                              |
-|-------------|--------------------------------------------------------------------------|
-| `listen`    | Local proxy bind address (`host:port`).                                  |
-| `logLevel`  | `debug` \| `info` \| `warn` \| `error`. Defaults to `info`.              |
-| `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/dockprox`). |
-| `upstreams` | Map of named upstream proxies.                                           |
-| `rules`     | Ordered list of `match` → `upstream` mappings.                           |
-
-Upstream `type` values:
-
-- `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
-- `http` — HTTP CONNECT proxy, `url: http(s)://...`.
-- `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `socks5Listen`.
-- `direct` — explicit passthrough.
-
-Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).
-
-Full reference: [docs/guide/configuration.md](docs/guide/configuration.md) · JSON Schema: [`dockprox.schema.json`](dockprox.schema.json).
-
-## Use cases
-
-- **Azure Container Registry** — route `*.azurecr.io` through a corporate SOCKS5 jumphost; everything else direct.
-- **GitHub Container Registry** — send `ghcr.io` through SOCKS5 only when on a restricted network.
-- **Private Harbor / internal registries** — proxy internal hosts while keeping Docker Hub and public mirrors direct.
-
 ## Documentation
 
 - [Installation](docs/guide/installation.md)
@@ -159,11 +92,82 @@ Requires Go 1.26+.
 
 </details>
 
+## Quick start
+
+Create `dockprox.yaml`:
+
+```yaml
+listen: 127.0.0.1:3128
+logLevel: info
+upstreams:
+  jumphost:
+    type: socks5
+    addr: 127.0.0.1:1080
+rules:
+  - match: "*.azurecr.io"
+    upstream: jumphost
+```
+
+Run:
+
+```shell
+dockprox serve --config dockprox.yaml
+```
+
+Point your client at it:
+
+```shell
+export HTTPS_PROXY=http://127.0.0.1:3128
+docker pull myregistry.azurecr.io/image:tag
+```
+
+Flags can also override or supply config inline:
+
+```shell
+dockprox serve \
+  --listen 127.0.0.1:3128 \
+  --upstream jumphost=socks5://127.0.0.1:1080 \
+  --rule '*.azurecr.io=jumphost'
+```
+
+## Configuration
+
+Top-level keys (`dockprox.schema.json`):
+
+| Key         | Description                                                              |
+|-------------|--------------------------------------------------------------------------|
+| `listen`    | Local proxy bind address (`host:port`).                                  |
+| `logLevel`  | `debug` \| `info` \| `warn` \| `error`. Defaults to `info`.              |
+| `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/dockprox`). |
+| `upstreams` | Map of named upstream proxies.                                           |
+| `rules`     | Ordered list of `match` → `upstream` mappings.                           |
+
+Upstream `type` values:
+
+- `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
+- `http` — HTTP CONNECT proxy, `url: http(s)://...`.
+- `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `socks5Listen`.
+- `direct` — explicit passthrough.
+
+Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).
+
+Full reference: [docs/guide/configuration.md](docs/guide/configuration.md) · JSON Schema: [`dockprox.schema.json`](dockprox.schema.json).
+
+## Use cases
+
+- **Azure Container Registry** — route `*.azurecr.io` through a corporate SOCKS5 jumphost; everything else direct.
+- **GitHub Container Registry** — send `ghcr.io` through SOCKS5 only when on a restricted network.
+- **Private Harbor / internal registries** — proxy internal hosts while keeping Docker Hub and public mirrors direct.
+
 ## macOS menu bar app
 
 A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macOS only, Wails-backed). It runs a dockprox proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
 
-It is not distributed via Homebrew or the release archives — build it from source:
+```shell
+brew install --cask foomo/tap/dockprox-menubar
+```
+
+It is not part of the standard release archives — alternatively, build it from source:
 
 ```shell
 make build.menubar   # → bin/dockprox-menubar

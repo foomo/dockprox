@@ -115,6 +115,31 @@ func (t *Tray) rebuildMenu() {
 		}
 	}).SetEnabled(snap.State == StateRunning)
 
+	autostartEnabled, err := t.app.Autostart.IsEnabled()
+	if err != nil {
+		t.logger.Warn("autostart status", "err", err)
+	}
+
+	loginGlyph := "□"
+	if autostartEnabled {
+		loginGlyph = "☑︎"
+	}
+
+	menu.Add(loginGlyph + " Start at Login").OnClick(func(_ *application.Context) {
+		var err error
+		if autostartEnabled {
+			err = t.app.Autostart.Disable()
+		} else {
+			err = t.app.Autostart.Enable()
+		}
+
+		if err != nil {
+			t.logger.Warn("toggle autostart", "err", err)
+		}
+
+		t.rebuildMenu()
+	})
+
 	// Config path: click to reveal in Finder.
 	menu.AddSeparator()
 
