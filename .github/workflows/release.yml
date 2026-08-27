@@ -141,7 +141,7 @@ jobs:
             desc "Menu bar app for dockprox, an inverse HTTP(S) proxy with SOCKS5 support"
             homepage "https://github.com/foomo/dockprox"
 
-            depends_on macos: ">= :big_sur"
+            depends_on macos: :big_sur
 
             app "dockprox.app"
 
@@ -152,10 +152,11 @@ jobs:
           EOF
 
           git clone "https://x-access-token:${GH_TOKEN}@github.com/foomo/homebrew-tap.git" tap
-          cp dockprox-menubar.rb tap/dockprox-menubar.rb
+          mkdir -p tap/Casks
+          cp dockprox-menubar.rb tap/Casks/dockprox-menubar.rb
           cd tap
           git config user.name "foomo-bot"
           git config user.email "bot@foomo.org"
-          git add dockprox-menubar.rb
+          git add Casks/dockprox-menubar.rb
           git diff --cached --quiet || git commit -m "chore: update dockprox-menubar to ${V}"
           git push
