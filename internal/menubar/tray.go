@@ -69,6 +69,13 @@ func (t *Tray) rebuildMenu() {
 	snap := t.ctrl.Snapshot()
 	menu := t.app.NewMenu()
 
+	menu.Add("🏄‍♂️ " + version).OnClick(func(_ *application.Context) {
+		if err := openReleases(); err != nil {
+			t.logger.Warn("open releases", "err", err)
+		}
+	})
+	menu.AddSeparator()
+
 	if snap.State == StateError && snap.LastError != nil {
 		menu.Add(fmt.Sprintf("Error: %s", snap.LastError)).SetEnabled(false)
 	}
