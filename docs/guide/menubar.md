@@ -12,6 +12,12 @@ The menu bar app is **macOS only** (Wails-backed, requires cgo + macOS SDK). It 
 brew install --cask foomo/tap/dockprox-menubar
 ```
 
+::: warning Unsigned app
+The app is currently ad-hoc signed, not notarized. On first launch, macOS Gatekeeper will
+block it — open **System Settings → Privacy & Security** and click **Open Anyway**, then
+confirm in the dialog that appears.
+:::
+
 ## Build & run
 
 From this repo on macOS:

@@ -167,6 +167,11 @@ A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macO
 brew install --cask foomo/tap/dockprox-menubar
 ```
 
+> [!NOTE]
+> The app is currently ad-hoc signed, not notarized. On first launch, macOS Gatekeeper will
+> block it — open **System Settings → Privacy & Security** and click **Open Anyway**, then
+> confirm in the dialog that appears.
+
 It is not part of the standard release archives — alternatively, build it from source:
 
 ```shell
