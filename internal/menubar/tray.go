@@ -6,11 +6,18 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync/atomic"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// restartBusyFloor is the minimum time the tray shows the disabled icon
+// after a Restart click, so the feedback is visible even though the
+// underlying Stop+Start cycle typically completes in microseconds.
+const restartBusyFloor = 500 * time.Millisecond
 
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
@@ -19,6 +26,7 @@ type Tray struct {
 	ctrl    *ProxyController
 	logger  *log.Logger
 	logPath string
+	busy    atomic.Bool
 }
 
 // NewTray creates the system tray and wires it to the controller.
@@ -52,7 +60,7 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 
 func (t *Tray) applyIcon(s State) {
 	var icon []byte
-	if s == StateRunning {
+	if s == StateRunning && !t.busy.Load() {
 		icon = iconRunning
 	} else {
 		icon = iconStopped
@@ -84,20 +92,41 @@ func (t *Tray) rebuildMenu() {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
 	}
 
-	// Tunnels: read-only status list, one glyph+name row each.
+	// Tunnels: one glyph+name row each, click to start/stop that tunnel.
 	if len(snap.Tunnels) > 0 {
 		menu.AddSeparator()
 
 		for _, ts := range snap.Tunnels {
+			name := ts.Name
+			listening := ts.State == TunnelListening
+
 			glyph := "○"
 			addr := "-"
 
-			if ts.ConnState == sshclient.ConnConnected {
-				glyph = "◉"
+			if listening {
 				addr = ts.Addr
+
+				if ts.ConnState == sshclient.ConnConnected {
+					glyph = "◉"
+				}
 			}
 
-			menu.Add(fmt.Sprintf("%s %s: %s", glyph, ts.Name, addr)).SetEnabled(false)
+			item := menu.Add(fmt.Sprintf("%s %s: %s", glyph, name, addr))
+			item.SetEnabled(snap.State == StateRunning && !t.busy.Load())
+
+			if listening {
+				item.OnClick(func(_ *application.Context) {
+					if err := t.ctrl.StopTunnel(name); err != nil {
+						t.logger.Warn("stop tunnel", "name", name, "err", err)
+					}
+				})
+			} else {
+				item.OnClick(func(_ *application.Context) {
+					if err := t.ctrl.StartTunnel(name); err != nil {
+						t.logger.Warn("start tunnel", "name", name, "err", err)
+					}
+				})
+			}
 		}
 	}
 
@@ -117,10 +146,29 @@ func (t *Tray) rebuildMenu() {
 	}
 
 	menu.Add("↺ Restart").OnClick(func(_ *application.Context) {
-		if err := t.ctrl.Restart(); err != nil {
-			t.logger.Warn("restart", "err", err)
-		}
-	}).SetEnabled(snap.State == StateRunning)
+		t.busy.Store(true)
+		t.applyIcon(snap.State)
+		t.rebuildMenu()
+
+		go func() {
+			start := time.Now()
+
+			if err := t.ctrl.Restart(); err != nil {
+				t.logger.Warn("restart", "err", err)
+			}
+
+			if remaining := restartBusyFloor - time.Since(start); remaining > 0 {
+				time.Sleep(remaining)
+			}
+
+			t.busy.Store(false)
+
+			application.InvokeAsync(func() {
+				t.applyIcon(t.ctrl.Snapshot().State)
+				t.rebuildMenu()
+			})
+		}()
+	}).SetEnabled(snap.State == StateRunning && !t.busy.Load())
 
 	autostartEnabled, err := t.app.Autostart.IsEnabled()
 	if err != nil {
