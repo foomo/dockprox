@@ -143,14 +143,14 @@ func (t *Tray) rebuildMenu() {
 	// Config path: click to reveal in Finder.
 	menu.AddSeparator()
 
-	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
-		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
+	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
+		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
 
-	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
-		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
+	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
+		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
