@@ -27,7 +27,7 @@ func DefaultLogPath() (string, error) {
 		return "", errors.Wrap(err, "user cache dir")
 	}
 
-	return filepath.Join(dir, "dockprox", LogFileName), nil
+	return filepath.Join(dir, "org.foomo.dockprox", LogFileName), nil
 }
 
 // ResolveLogPath returns cfg.LogFile if set, otherwise DefaultLogPath.
