@@ -73,27 +73,28 @@ build:
 
 .PHONY: build.menubar
 ## Build macOS menubar app binary (darwin only)
+build.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
 build.menubar:
 ifeq ($(shell uname),Darwin)
 	@echo "〉go build bin/dockprox-menubar"
 	@rm -f bin/dockprox-menubar
-	@go build -tags=safe -o bin/dockprox-menubar ./cmd/dockprox-menubar
+	@go build -tags=safe -ldflags "-X github.com/foomo/dockprox/internal/menubar.version=$(VERSION)" -o bin/dockprox-menubar ./cmd/dockprox-menubar
 else
 	$(error build.menubar requires macOS)
 endif
 
 .PHONY: package.menubar
-## Package macOS menubar app into dist/dockprox.app (darwin only)
+## Package macOS menubar app into dist/Dockprox.app (darwin only)
 package.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
 package.menubar: build.menubar
 ifeq ($(shell uname),Darwin)
-	@echo "〉packaging dist/dockprox.app ($(VERSION))"
-	@rm -rf dist/dockprox.app
-	@mkdir -p dist/dockprox.app/Contents/MacOS dist/dockprox.app/Contents/Resources
-	@iconutil -c icns cmd/dockprox-menubar/icon.iconset -o dist/dockprox.app/Contents/Resources/icon.icns
-	@sed 's/__VERSION__/$(VERSION)/g' cmd/dockprox-menubar/Info.plist > dist/dockprox.app/Contents/Info.plist
-	@cp bin/dockprox-menubar dist/dockprox.app/Contents/MacOS/dockprox-menubar
-	@codesign --force --deep --sign - dist/dockprox.app
+	@echo "〉packaging dist/Dockprox.app ($(VERSION))"
+	@rm -rf dist/Dockprox.app
+	@mkdir -p dist/Dockprox.app/Contents/MacOS dist/Dockprox.app/Contents/Resources
+	@iconutil -c icns cmd/dockprox-menubar/icon.iconset -o dist/Dockprox.app/Contents/Resources/icon.icns
+	@sed 's/__VERSION__/$(VERSION)/g' cmd/dockprox-menubar/Info.plist > dist/Dockprox.app/Contents/Info.plist
+	@cp bin/dockprox-menubar dist/Dockprox.app/Contents/MacOS/dockprox-menubar
+	@codesign --force --deep --sign - dist/Dockprox.app
 else
 	$(error package.menubar requires macOS)
 endif

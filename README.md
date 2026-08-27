@@ -182,8 +182,8 @@ bin/dockprox-menubar
 To get a proper `.app` bundle (icon, `Info.plist`, ad-hoc code signature):
 
 ```shell
-make package.menubar   # → dist/dockprox.app
-open dist/dockprox.app
+make package.menubar   # → dist/Dockprox.app
+open dist/Dockprox.app
 ```
 
 Run straight from source:

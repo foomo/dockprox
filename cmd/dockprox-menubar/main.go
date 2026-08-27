@@ -56,7 +56,7 @@ func run(cfgPath string) error {
 	ctrl := menubar.New(cfgPath, logger)
 
 	app := application.New(application.Options{
-		Name: "dockprox",
+		Name: "Dockprox",
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory,
 		},
