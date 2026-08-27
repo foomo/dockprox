@@ -33,7 +33,7 @@ Or run from source:
 go run -tags=safe ./cmd/dockprox-menubar
 ```
 
-The proxy auto-starts when the app launches. The tray icon reflects the running / stopped state.
+The proxy auto-starts when the app launches. The tray icon reflects the running / stopped state, and dims briefly while a restart is in progress.
 
 ## Flags
 
@@ -72,13 +72,16 @@ cache dir: `~/Library/Caches/org.foomo.dockprox/dockprox.log`.
 | **Version** (top item)    | Shows the running app version. Click to open the GitHub releases page. |
 | **Start**                 | Start the in-process proxy with the resolved config.                   |
 | **Stop**                  | Stop the running proxy.                                                |
-| **Restart**               | Stop, reload the config from disk, and start again.                    |
+| **Restart**               | Stop, reload the config from disk, and start again. Disabled — and the tray icon dims — while a restart is in flight. |
+| *(tunnel rows)*           | One row per SSH upstream with a `socks5Listen`, e.g. `◉ bastion: 127.0.0.1:1080`. Click a listening tunnel (`◉`) to stop it, or a stopped one (`○`) to start it, independently of the main proxy. |
 | **Start at Login**        | Toggle launching the app automatically at login — needed since dockprox must be running for a system-wide proxy setup to reach anything. |
 | **Reveal logs in Finder** | Open the log file (see [Logging](#logging)) in Finder.                |
 | **Reveal config in Finder** | Open the resolved config file in Finder.                             |
 | **Quit**                  | Stop the proxy and exit the app.                                       |
 
 Edit the resolved config file with any editor and use **Restart** to apply changes — there is no live-reload.
+
+Tunnel rows are only shown while the main proxy is running, and are disabled during a restart.
 
 ## See also
 
