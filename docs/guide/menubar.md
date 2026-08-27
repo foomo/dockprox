@@ -1,6 +1,6 @@
 # Menu bar app (macOS)
 
-A native menu bar (tray) app ships as a separate `dockprox-menubar` binary. It runs a `dockprox` proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
+A native menu bar (tray) app ships as a separate `dockprox-menubar` binary. It runs a `dockprox` proxy in-process and exposes Start / Stop / Restart / Reveal-logs-in-Finder / Reveal-config-in-Finder / Quit from the system tray.
 
 ::: info Platform
 The menu bar app is **macOS only** (Wails-backed, requires cgo + macOS SDK). It is not part of the standard `dockprox` release archives — build it locally on a Mac.
@@ -60,14 +60,21 @@ If none of these exist, a default config is written:
 
 Parent directories are created as needed.
 
+## Logging
+
+Logs are written to `logFile` if set in the config, otherwise to the OS
+cache dir: `~/Library/Caches/org.foomo.dockprox/dockprox.log`.
+
 ## Tray actions
 
 | Action                    | Effect                                                                 |
 |---------------------------|------------------------------------------------------------------------|
+| **Version** (top item)    | Shows the running app version. Click to open the GitHub releases page. |
 | **Start**                 | Start the in-process proxy with the resolved config.                   |
 | **Stop**                  | Stop the running proxy.                                                |
 | **Restart**               | Stop, reload the config from disk, and start again.                    |
 | **Start at Login**        | Toggle launching the app automatically at login — needed since dockprox must be running for a system-wide proxy setup to reach anything. |
+| **Reveal logs in Finder** | Open the log file (see [Logging](#logging)) in Finder.                |
 | **Reveal config in Finder** | Open the resolved config file in Finder.                             |
 | **Quit**                  | Stop the proxy and exit the app.                                       |
 

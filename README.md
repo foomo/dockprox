@@ -138,7 +138,7 @@ Top-level keys (`dockprox.schema.json`):
 |-------------|--------------------------------------------------------------------------|
 | `listen`    | Local proxy bind address (`host:port`).                                  |
 | `logLevel`  | `debug` \| `info` \| `warn` \| `error`. Defaults to `info`.              |
-| `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/dockprox`). |
+| `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/org.foomo.dockprox`). |
 | `upstreams` | Map of named upstream proxies.                                           |
 | `rules`     | Ordered list of `match` → `upstream` mappings.                           |
 
