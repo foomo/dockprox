@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/charmbracelet/log"
 	"github.com/pkg/errors"
@@ -27,7 +28,15 @@ func DefaultLogPath() (string, error) {
 		return "", errors.Wrap(err, "user cache dir")
 	}
 
-	return filepath.Join(dir, "dockprox", LogFileName), nil
+	var dirname string
+	switch runtime.GOOS {
+	case "darwin", "ios":
+		dirname = "org.foomo.dockprox"
+	default:
+		dirname = "dockprox"
+	}
+
+	return filepath.Join(dir, dirname, LogFileName), nil
 }
 
 // ResolveLogPath returns cfg.LogFile if set, otherwise DefaultLogPath.

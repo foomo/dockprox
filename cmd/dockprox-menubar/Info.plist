@@ -5,9 +5,9 @@
   <key>CFBundleIdentifier</key>
   <string>com.foomo.dockprox</string>
   <key>CFBundleName</key>
-  <string>dockprox</string>
+  <string>Dockprox</string>
   <key>CFBundleDisplayName</key>
-  <string>dockprox</string>
+  <string>Dockprox</string>
   <key>CFBundleExecutable</key>
   <string>dockprox-menubar</string>
   <key>CFBundlePackageType</key>

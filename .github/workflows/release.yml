@@ -87,7 +87,7 @@ jobs:
           V="${VERSION#v}"
           mkdir -p dist
           for ARCH in arm64 amd64; do
-            APP="dist/dockprox.app"
+            APP="dist/Dockprox.app"
             rm -rf "$APP"
             mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
             sed "s/__VERSION__/${V}/g" cmd/dockprox-menubar/Info.plist > "$APP/Contents/Info.plist"
@@ -143,7 +143,7 @@ jobs:
 
             depends_on macos: :big_sur
 
-            app "dockprox.app"
+            app "Dockprox.app"
 
             zap trash: [
               "~/Library/Preferences/com.foomo.dockprox.plist",

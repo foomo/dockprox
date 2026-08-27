@@ -69,6 +69,13 @@ func (t *Tray) rebuildMenu() {
 	snap := t.ctrl.Snapshot()
 	menu := t.app.NewMenu()
 
+	menu.Add("🏄‍♂️ " + version).OnClick(func(_ *application.Context) {
+		if err := openReleases(); err != nil {
+			t.logger.Warn("open releases", "err", err)
+		}
+	})
+	menu.AddSeparator()
+
 	if snap.State == StateError && snap.LastError != nil {
 		menu.Add(fmt.Sprintf("Error: %s", snap.LastError)).SetEnabled(false)
 	}
@@ -143,14 +150,14 @@ func (t *Tray) rebuildMenu() {
 	// Config path: click to reveal in Finder.
 	menu.AddSeparator()
 
-	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
-		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
+	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
+		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
 
-	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
-		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
+	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
+		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})

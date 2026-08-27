@@ -38,28 +38,25 @@ func run(cfgPath string) error {
 		cfgPath = resolved
 	}
 
-	cfg, err := config.LoadFile(cfgPath)
+	// Log setup must not depend on config validity: a bad config file is a
+	// runtime condition surfaced via ctrl.Start() -> StateError, not a
+	// reason to fail before the tray (and its log output) even exists.
+	logPath, err := config.DefaultLogPath()
 	if err != nil {
 		return err
 	}
 
-	logPath, err := config.ResolveLogPath(cfg)
-	if err != nil {
-		return err
-	}
-
-	logWriter, err := config.OpenLogWriter(cfg)
+	logWriter, err := config.OpenLogWriter(config.Defaults())
 	if err != nil {
 		return err
 	}
 
 	logger := log.NewWithOptions(logWriter, log.Options{ReportTimestamp: true})
-	logger.SetLevel(config.LevelFromString(cfg.LogLevel))
 
 	ctrl := menubar.New(cfgPath, logger)
 
 	app := application.New(application.Options{
-		Name: "dockprox",
+		Name: "Dockprox",
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory,
 		},
