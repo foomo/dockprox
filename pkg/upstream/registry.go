@@ -48,6 +48,8 @@ func build(name string, u config.Upstream) (Dialer, error) {
 		return NewSocks5(name, u), nil
 	case config.UpstreamHTTP:
 		return NewHTTP(name, u)
+	case config.UpstreamForward:
+		return NewForward(name, u.Addr), nil
 	case config.UpstreamSSH:
 		return NewSSH(name, u)
 	default:

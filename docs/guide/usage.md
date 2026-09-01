@@ -58,6 +58,30 @@ docker pull myreg.azurecr.io/app:tag    # docker daemon proxy set separately
 
 Everything else stays direct.
 
+## Local clusters on non-standard ports
+
+A `type: forward` upstream ignores the requested target and always dials
+`addr`. The hostname still travels in the TLS SNI and the `Host` header,
+so an ingress controller keeps routing by name while the connection lands
+on a different port.
+
+This is how you reach several local k3d/kind clusters that share one
+wildcard domain but cannot all bind `:443`:
+
+```yaml
+listen: 127.0.0.1:1030
+upstreams:
+  cluster-a: { type: forward, addr: 127.0.0.1:10310 }
+  cluster-b: { type: forward, addr: 127.0.0.1:10320 }
+rules:
+  - { match: "*.a.local.gd", upstream: cluster-a }
+  - { match: "*.b.local.gd", upstream: cluster-b }
+```
+
+Point the browser's proxy at `127.0.0.1:1030` (e.g. a FoxyProxy pattern
+for `*.local.gd`) and `https://app.a.local.gd` reaches cluster A's
+ingress on port 10310 — no port in the URL, no `/etc/hosts` entries.
+
 ## SSH tunnels
 
 A `type: ssh` upstream is an SSH connection dockprox owns. It connects

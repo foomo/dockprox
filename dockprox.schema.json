@@ -69,12 +69,13 @@
             "socks5",
             "http",
             "direct",
-            "ssh"
+            "ssh",
+            "forward"
           ]
         },
         "addr": {
           "type": "string",
-          "description": "host:port for socks5"
+          "description": "host:port for socks5; fixed dial target for forward"
         },
         "url": {
           "type": "string",

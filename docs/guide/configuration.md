@@ -10,7 +10,7 @@ logLevel: info
 
 upstreams:
   jump:
-    type: socks5        # socks5 | http | direct | ssh
+    type: socks5        # socks5 | http | direct | ssh | forward
     addr: 127.0.0.1:1080
     dns: remote         # remote (socks5h) | local
     auth:
@@ -31,6 +31,10 @@ upstreams:
     hostKey: "SHA256:..."       # pinned fingerprint; falls back to ~/.ssh/known_hosts
     socks5Listen: 127.0.0.1:1080 # optional: expose a local SOCKS5 port
 
+  cluster-a:
+    type: forward
+    addr: 127.0.0.1:10310       # required; every matched host dials this
+
 rules:
   - match: "*.azurecr.io"     # exact host or *.suffix wildcard
     upstream: jump
@@ -42,7 +46,7 @@ rules:
 --config PATH|-              # file path or '-' for stdin
 --listen ADDR                # default 127.0.0.1:8888
 --log-level LEVEL            # debug | info | warn | error
---upstream NAME=URL          # repeatable; socks5://h:p, http://h:p, direct
+--upstream NAME=URL          # repeatable; socks5://h:p, http://h:p, forward://h:p, direct
 --rule PATTERN=UPSTREAM      # repeatable
 ```
 

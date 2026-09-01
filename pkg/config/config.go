@@ -11,8 +11,8 @@ type Config struct {
 
 // Upstream defines a named proxy upstream that rules can reference.
 type Upstream struct {
-	Type string        `json:"type"           yaml:"type"           jsonschema:"enum=socks5,enum=http,enum=direct,enum=ssh"`
-	Addr string        `json:"addr,omitempty" yaml:"addr,omitempty" jsonschema:"description=host:port for socks5"`
+	Type string        `json:"type"           yaml:"type"           jsonschema:"enum=socks5,enum=http,enum=direct,enum=ssh,enum=forward"`
+	Addr string        `json:"addr,omitempty" yaml:"addr,omitempty" jsonschema:"description=host:port for socks5; fixed dial target for forward"`
 	URL  string        `json:"url,omitempty"  yaml:"url,omitempty"  jsonschema:"description=URL for http upstreams"`
 	DNS  string        `json:"dns,omitempty"  yaml:"dns,omitempty"  jsonschema:"enum=local,enum=remote,default=local"`
 	Auth *UpstreamAuth `json:"auth,omitempty" yaml:"auth,omitempty"`

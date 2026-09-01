@@ -13,10 +13,11 @@ import (
 
 // Upstream type constants used by Upstream.Type.
 const (
-	UpstreamSocks5 = "socks5"
-	UpstreamHTTP   = "http"
-	UpstreamDirect = "direct"
-	UpstreamSSH    = "ssh"
+	UpstreamSocks5  = "socks5"
+	UpstreamHTTP    = "http"
+	UpstreamDirect  = "direct"
+	UpstreamSSH     = "ssh"
+	UpstreamForward = "forward"
 )
 
 // IdentityAgentEnv is the sentinel identityAgent value meaning "read the
@@ -100,6 +101,19 @@ func (u Upstream) validate() error {
 	case UpstreamHTTP:
 		if u.URL == "" {
 			return errors.New("url: required for http")
+		}
+	case UpstreamForward:
+		if u.Addr == "" {
+			return errors.New("addr: required for forward")
+		}
+
+		host, _, err := net.SplitHostPort(u.Addr)
+		if err != nil {
+			return errors.Wrap(err, "addr")
+		}
+
+		if host == "" {
+			return errors.Errorf("addr: host required, got %q", u.Addr)
 		}
 	case UpstreamDirect:
 		// no required fields
