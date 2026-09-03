@@ -19,6 +19,11 @@ import (
 // underlying Stop+Start cycle typically completes in microseconds.
 const restartBusyFloor = 500 * time.Millisecond
 
+// probeBudget bounds a whole forward-probe round. The probes run
+// concurrently and each is capped at ProbeTimeout, so this is a backstop
+// against a wedged resolver rather than a per-endpoint deadline.
+const probeBudget = 2 * time.Second
+
 // launchTimeout bounds the Chrome launch (profile mkdir plus fork/exec).
 // Both are local, so this only trips if the filesystem is wedged — e.g. a
 // stalled network home directory.
@@ -74,6 +79,13 @@ type Tray struct {
 	// autostart caches Autostart.IsEnabled() so rebuildMenu never makes
 	// that call on the UI thread.
 	autostart atomic.Bool
+	// forwardUp caches the last ProbeForwards verdict (map[name]bool) so
+	// rebuildMenu never dials on the UI thread. Refreshed off-thread when
+	// the menu opens; nil until the first probe completes.
+	forwardUp atomic.Pointer[map[string]bool]
+	// probing guards against overlapping probes when the menu is opened
+	// repeatedly in quick succession.
+	probing atomic.Bool
 }
 
 // NewTray creates the system tray and wires it to the controller.
@@ -98,12 +110,54 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 		})
 	})
 
-	t.systray.OnRightClick(func() {
+	// Both click handlers open the menu themselves. Wails only falls back
+	// to native menu tracking when the corresponding handler is nil (see
+	// systrayPreClickCallback), so setting them is what gives us a
+	// Go-side "menu is opening" signal at all — and the left click needs
+	// the explicit OpenMenu it would otherwise have gotten natively.
+	//
+	// Probing dials the network, so it cannot happen inside rebuildMenu
+	// on the UI thread. Kick it off here and rebuild once the verdicts
+	// land: the menu opens immediately showing the previous verdicts,
+	// then updates in place a few hundred milliseconds later.
+	open := func() {
 		t.rebuildMenu()
 		t.systray.OpenMenu()
-	})
+		t.refreshForwards()
+	}
+
+	t.systray.OnClick(open)
+	t.systray.OnRightClick(open)
 
 	return t
+}
+
+// refreshForwards probes the configured forwards off the UI thread and
+// rebuilds the menu with the result. A probe already in flight wins; this
+// call then returns immediately rather than queueing a duplicate.
+func (t *Tray) refreshForwards() {
+	if !t.probing.CompareAndSwap(false, true) {
+		return
+	}
+
+	forwards := t.ctrl.Snapshot().Forwards
+	if len(forwards) == 0 {
+		t.probing.Store(false)
+
+		return
+	}
+
+	go func() {
+		defer t.probing.Store(false)
+
+		ctx, cancel := context.WithTimeout(context.Background(), probeBudget)
+		defer cancel()
+
+		up := ProbeForwards(ctx, forwards)
+		t.forwardUp.Store(&up)
+
+		application.InvokeAsync(t.rebuildMenu)
+	}()
 }
 
 // refreshAutostart re-reads the autostart state into the cache. Called at
@@ -189,6 +243,33 @@ func (t *Tray) rebuildMenu() {
 					})
 				})
 			}
+		}
+	}
+
+	// Forwards: one row per "forward" upstream, glyph reflecting whether
+	// the configured endpoint currently accepts a connection. Unlike
+	// tunnels these have nothing to start or stop, so the rows are
+	// informational only.
+	if len(snap.Forwards) > 0 {
+		menu.AddSeparator()
+
+		up := t.forwardUp.Load()
+
+		for _, fs := range snap.Forwards {
+			// "?" until the first probe returns, so an unprobed forward is
+			// not misreported as down.
+			glyph := "?"
+			if up != nil {
+				if reachable, ok := (*up)[fs.Name]; ok {
+					glyph = "○"
+
+					if reachable {
+						glyph = "◉"
+					}
+				}
+			}
+
+			menu.Add(fmt.Sprintf("%s %s: %s", glyph, fs.Name, fs.Addr)).SetEnabled(false)
 		}
 	}
 

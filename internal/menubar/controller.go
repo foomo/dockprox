@@ -106,9 +106,20 @@ type Status struct {
 	ConfigPath string
 	LastError  error
 	Tunnels    []TunnelStatus
+	Forwards   []ForwardStatus
 	// Chrome is the loaded config's chrome section, or nil when the
 	// controller is not running or the section is absent.
 	Chrome *config.Chrome
+}
+
+// ForwardStatus describes one "forward" upstream's fixed dial target. It
+// carries no reachability verdict: a forward has no lifecycle the
+// controller owns (unlike a tunnel, which owns a listener), so whether the
+// endpoint answers is probed on demand by the UI — see ProbeForwards.
+type ForwardStatus struct {
+	Name string
+	// Addr is the upstream's configured fixed dial target ("host:port").
+	Addr string
 }
 
 // TunnelStatus describes one ssh tunnel's SOCKS5 listener and SSH
@@ -584,9 +595,24 @@ func (c *ProxyController) statusLocked() Status {
 
 	if c.cfg != nil {
 		st.Chrome = c.cfg.Chrome
+		st.Forwards = forwardStatus(c.cfg)
 	}
 
 	return st
+}
+
+// forwardStatus lists the config's "forward" upstreams, sorted by name so
+// the menu order is stable across rebuilds.
+func forwardStatus(cfg *config.Config) []ForwardStatus {
+	out := make([]ForwardStatus, 0, len(cfg.Upstreams))
+
+	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
+		if u := cfg.Upstreams[name]; u.Type == config.UpstreamForward {
+			out = append(out, ForwardStatus{Name: name, Addr: u.Addr})
+		}
+	}
+
+	return out
 }
 
 // tunnelStatusLocked builds the []TunnelStatus snapshot from c.tunnels.

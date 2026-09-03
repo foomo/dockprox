@@ -75,6 +75,7 @@ Logs are written to `logFile` if set in the config, otherwise to the OS cache di
 | **Stop**                    | Stop the running proxy.                                                                                                                                                                           |
 | **Restart**                 | Stop, reload the config from disk, and start again. Disabled — and the tray icon dims — while a restart is in flight.                                                                             |
 | *(tunnel rows)*             | One row per SSH upstream with a `socks5Listen`, e.g. `◉ bastion: 127.0.0.1:1080`. Click a listening tunnel (`◉`) to stop it, or a stopped one (`○`) to start it, independently of the main proxy. |
+| *(forward rows)*            | One row per `forward` upstream with its fixed `addr`, e.g. `◉ staging: 127.0.0.1:8443`. Read-only — see [Forward status](#forward-status).                                                        |
 | **Open Chrome**             | Launch an isolated Chrome instance pointed at the proxy (see [Isolated Chrome](#isolated-chrome)). Only enabled while the proxy is running.                                                       |
 | **Start at Login**          | Toggle launching the app automatically at login — needed since dockprox must be running for a system-wide proxy setup to reach anything.                                                          |
 | **Reveal logs in Finder**   | Open the log file (see [Logging](#logging)) in Finder.                                                                                                                                            |
@@ -84,6 +85,24 @@ Logs are written to `logFile` if set in the config, otherwise to the OS cache di
 Edit the resolved config file with any editor and use **Restart** to apply changes — there is no live-reload.
 
 Tunnel rows are only shown while the main proxy is running, and are disabled during a restart.
+
+## Forward status
+
+Each `forward` upstream gets a row showing its configured `addr` and whether that endpoint currently accepts a TCP
+connection:
+
+| Glyph | Meaning                                                        |
+|-------|----------------------------------------------------------------|
+| `◉`   | The endpoint accepted a connection.                            |
+| `○`   | The dial failed — nothing is listening, or it timed out.       |
+| `?`   | Not probed yet (shown until the first probe of the session).   |
+
+Unlike tunnels, forwards have no listener of their own to start or stop, so the rows are informational only.
+
+Endpoints are probed when you open the menu, not on a background timer — so there is no periodic dial traffic while the
+menu is closed. The menu opens immediately with the previous verdicts and updates in place once the probes land, each
+capped at 500ms. A successful dial only proves something is listening on that address; it does not check that the backend
+behind it is healthy.
 
 ## Responsiveness
 
