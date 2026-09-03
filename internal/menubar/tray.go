@@ -19,6 +19,50 @@ import (
 // underlying Stop+Start cycle typically completes in microseconds.
 const restartBusyFloor = 500 * time.Millisecond
 
+// launchTimeout bounds the Chrome launch (profile mkdir plus fork/exec).
+// Both are local, so this only trips if the filesystem is wedged — e.g. a
+// stalled network home directory.
+const launchTimeout = 10 * time.Second
+
+// runBusy runs fn off the UI thread, holding the tray in its busy state
+// until it returns. Every menu action that touches the filesystem, binds a
+// listener, or waits on a goroutine goes through here: Wails dispatches
+// OnClick on the UI thread, so doing that work inline freezes the menu bar
+// for the duration.
+//
+// The busy flag both dims the icon and disables the actions that must not
+// overlap, so a second click cannot race the first.
+func (t *Tray) runBusy(label string, fn func() error) {
+	if !t.busy.CompareAndSwap(false, true) {
+		t.logger.Warn("busy", "action", label)
+
+		return
+	}
+
+	// Reflect the busy state immediately; we are still on the UI thread.
+	t.applyIcon(t.ctrl.Snapshot().State)
+	t.rebuildMenu()
+
+	go func() {
+		start := time.Now()
+
+		if err := fn(); err != nil {
+			t.logger.Warn(label, "err", err)
+		}
+
+		if remaining := restartBusyFloor - time.Since(start); remaining > 0 {
+			time.Sleep(remaining)
+		}
+
+		t.busy.Store(false)
+
+		application.InvokeAsync(func() {
+			t.applyIcon(t.ctrl.Snapshot().State)
+			t.rebuildMenu()
+		})
+	}()
+}
+
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
 	app     *application.App
@@ -27,6 +71,9 @@ type Tray struct {
 	logger  *log.Logger
 	logPath string
 	busy    atomic.Bool
+	// autostart caches Autostart.IsEnabled() so rebuildMenu never makes
+	// that call on the UI thread.
+	autostart atomic.Bool
 }
 
 // NewTray creates the system tray and wires it to the controller.
@@ -40,6 +87,7 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 		logPath: logPath,
 	}
 
+	t.refreshAutostart()
 	t.applyIcon(ctrl.Snapshot().State)
 	t.rebuildMenu()
 
@@ -56,6 +104,20 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 	})
 
 	return t
+}
+
+// refreshAutostart re-reads the autostart state into the cache. Called at
+// startup (before the event loop runs) and after a successful toggle, both
+// of which are off the menu-build path.
+func (t *Tray) refreshAutostart() {
+	enabled, err := t.app.Autostart.IsEnabled()
+	if err != nil {
+		t.logger.Warn("autostart status", "err", err)
+
+		return
+	}
+
+	t.autostart.Store(enabled)
 }
 
 func (t *Tray) applyIcon(s State) {
@@ -116,64 +178,60 @@ func (t *Tray) rebuildMenu() {
 
 			if listening {
 				item.OnClick(func(_ *application.Context) {
-					if err := t.ctrl.StopTunnel(name); err != nil {
-						t.logger.Warn("stop tunnel", "name", name, "err", err)
-					}
+					t.runBusy("stop tunnel "+name, func() error {
+						return t.ctrl.StopTunnel(name)
+					})
 				})
 			} else {
 				item.OnClick(func(_ *application.Context) {
-					if err := t.ctrl.StartTunnel(name); err != nil {
-						t.logger.Warn("start tunnel", "name", name, "err", err)
-					}
+					t.runBusy("start tunnel "+name, func() error {
+						return t.ctrl.StartTunnel(name)
+					})
 				})
 			}
 		}
 	}
 
+	// Isolated Chrome instance pointed at the local proxy.
+	menu.AddSeparator()
+
+	chrome := menu.Add("↗ Open Chrome")
+	chrome.SetEnabled(snap.State == StateRunning && !t.busy.Load())
+	chrome.OnClick(func(_ *application.Context) {
+		t.runBusy("launch chrome", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), launchTimeout)
+			defer cancel()
+
+			return LaunchChrome(ctx, snap.ListenAddr, snap.Chrome)
+		})
+	})
+
 	// Actions grouped together: proxy lifecycle controls.
 	menu.AddSeparator()
 
 	if snap.State == StateRunning {
-		menu.Add("⏹︎ Stop").OnClick(func(_ *application.Context) {
-			_ = t.ctrl.Stop()
+		stop := menu.Add("⏹︎ Stop")
+		stop.SetEnabled(!t.busy.Load())
+		stop.OnClick(func(_ *application.Context) {
+			t.runBusy("stop", t.ctrl.Stop)
 		})
 	} else {
-		menu.Add("▶︎ Start").OnClick(func(_ *application.Context) {
-			if err := t.ctrl.Start(); err != nil {
-				t.logger.Warn("start", "err", err)
-			}
+		start := menu.Add("▶︎ Start")
+		start.SetEnabled(!t.busy.Load())
+		start.OnClick(func(_ *application.Context) {
+			t.runBusy("start", t.ctrl.Start)
 		})
 	}
 
 	menu.Add("↺ Restart").OnClick(func(_ *application.Context) {
-		t.busy.Store(true)
-		t.applyIcon(snap.State)
-		t.rebuildMenu()
-
-		go func() {
-			start := time.Now()
-
-			if err := t.ctrl.Restart(); err != nil {
-				t.logger.Warn("restart", "err", err)
-			}
-
-			if remaining := restartBusyFloor - time.Since(start); remaining > 0 {
-				time.Sleep(remaining)
-			}
-
-			t.busy.Store(false)
-
-			application.InvokeAsync(func() {
-				t.applyIcon(t.ctrl.Snapshot().State)
-				t.rebuildMenu()
-			})
-		}()
+		t.runBusy("restart", t.ctrl.Restart)
 	}).SetEnabled(snap.State == StateRunning && !t.busy.Load())
 
-	autostartEnabled, err := t.app.Autostart.IsEnabled()
-	if err != nil {
-		t.logger.Warn("autostart status", "err", err)
-	}
+	// Read the cached value rather than calling Autostart.IsEnabled() here:
+	// that is a synchronous SMAppService call, and rebuildMenu runs on the
+	// UI thread on every controller notify. refreshAutostart keeps the
+	// cache current off-thread.
+	autostartEnabled := t.autostart.Load()
 
 	loginGlyph := "□"
 	if autostartEnabled {
@@ -181,23 +239,29 @@ func (t *Tray) rebuildMenu() {
 	}
 
 	menu.Add(loginGlyph + " Start at Login").OnClick(func(_ *application.Context) {
-		var err error
-		if autostartEnabled {
-			err = t.app.Autostart.Disable()
-		} else {
-			err = t.app.Autostart.Enable()
-		}
+		t.runBusy("toggle autostart", func() error {
+			var err error
+			if autostartEnabled {
+				err = t.app.Autostart.Disable()
+			} else {
+				err = t.app.Autostart.Enable()
+			}
 
-		if err != nil {
-			t.logger.Warn("toggle autostart", "err", err)
-		}
+			if err != nil {
+				return err
+			}
 
-		t.rebuildMenu()
+			t.refreshAutostart()
+
+			return nil
+		})
 	})
 
 	// Config path: click to reveal in Finder.
 	menu.AddSeparator()
 
+	// Reveal only forks `open` and never waits, so it cannot stall the UI
+	// thread the way the lifecycle actions can — no runBusy needed.
 	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
 		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
 			t.logger.Warn("reveal", "err", err)

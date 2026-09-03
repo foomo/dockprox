@@ -2,6 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$ref": "#/$defs/Config",
   "$defs": {
+    "Chrome": {
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "app name / bundle ID / .app path as accepted by open -a (default: Google Chrome)"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "extra command line flags appended after the proxy and profile flags"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Config": {
       "properties": {
         "listen": {
@@ -33,6 +50,9 @@
             "$ref": "#/$defs/Rule"
           },
           "type": "array"
+        },
+        "chrome": {
+          "$ref": "#/$defs/Chrome"
         }
       },
       "additionalProperties": false,
