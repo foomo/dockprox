@@ -44,6 +44,16 @@ upstreams:
   direct:
     type: direct
 
+  # Forward upstream: ignores the requested target and always dials addr.
+  # The client's hostname still travels in the TLS SNI and the Host
+  # header, so a vhost-routing backend (ingress controller, reverse
+  # proxy) sees the original name while the connection lands elsewhere.
+  # Useful for reaching a local k3d/kind cluster published on a
+  # non-standard port without putting that port in the URL.
+  cluster-a:
+    type: forward
+    addr: 127.0.0.1:10310         # host:port, required for type: forward
+
   # SSH tunnel. dockprox opens the SSH connection itself (lazily, on first
   # use) and exposes it as a rule target and/or a local SOCKS5 port.
   bastion:
@@ -70,3 +80,20 @@ rules:
     upstream: corp
   - match: "*.internal.example.com"
     upstream: bastion
+  - match: "*.a.local.gd"
+    upstream: cluster-a
+
+# Isolated Chrome instance launched from the macOS menu bar app
+# ("Open Chrome"), pointed at the listen address above. It uses its own
+# profile under ~/Library/Application Support/dockprox/chrome, so it never
+# touches your own Chrome profile. Optional — omit for the defaults.
+chrome:
+  # Which browser to launch, as accepted by `open -a`: an app name, a
+  # bundle ID (com.google.Chrome), or an .app path. Default: Google Chrome.
+  # dockprox launches via `open` rather than executing the binary inside
+  # the .app, so macOS does not ask for App Management permission.
+  app: Google Chrome
+  # Extra flags, appended after the proxy and profile flags (so they win).
+  flags:
+    - --incognito
+    - --window-size=1280,800

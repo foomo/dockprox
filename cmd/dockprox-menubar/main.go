@@ -64,10 +64,16 @@ func run(cfgPath string) error {
 
 	menubar.NewTray(app, ctrl, logger, logPath)
 
+	// Start off the UI thread: it reads the config, validates ssh keys and
+	// binds every listener, which would otherwise leave the menu bar
+	// unresponsive for as long as that takes. The tray renders the
+	// resulting state via its controller subscription.
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		if err := ctrl.Start(); err != nil {
-			logger.Warn("auto-start failed", "err", err)
-		}
+		go func() {
+			if err := ctrl.Start(); err != nil {
+				logger.Warn("auto-start failed", "err", err)
+			}
+		}()
 	})
 
 	app.OnShutdown(func() { _ = ctrl.Stop() })

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
@@ -15,6 +16,41 @@ import (
 	"github.com/foomo/dockprox/pkg/upstream"
 	"github.com/pkg/errors"
 )
+
+// ShutdownTimeout bounds how long Stop and StopTunnel wait for a
+// listener's Serve goroutine to return after its context is cancelled.
+//
+// Cancelling closes the listener, so Accept unblocks and Serve returns in
+// microseconds; this deadline only matters if that goroutine is wedged.
+// Exceeding it is not fatal — the listener is already closed and the
+// controller state is already updated, so we stop waiting and let the
+// goroutine finish on its own rather than blocking the caller forever.
+const ShutdownTimeout = 5 * time.Second
+
+// errShutdownTimeout is returned by Stop/StopTunnel when a Serve goroutine
+// did not return within ShutdownTimeout.
+var errShutdownTimeout = errors.Errorf("shutdown timed out after %s", ShutdownTimeout)
+
+// waitDone waits for every channel in dones to close, sharing one deadline
+// across all of them. Returns false if the deadline expired first.
+func waitDone(dones []chan struct{}, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	for _, d := range dones {
+		if d == nil {
+			continue
+		}
+
+		select {
+		case <-d:
+		case <-deadline.C:
+			return false
+		}
+	}
+
+	return true
+}
 
 // State is the proxy lifecycle state.
 type State int
@@ -70,6 +106,20 @@ type Status struct {
 	ConfigPath string
 	LastError  error
 	Tunnels    []TunnelStatus
+	Forwards   []ForwardStatus
+	// Chrome is the loaded config's chrome section, or nil when the
+	// controller is not running or the section is absent.
+	Chrome *config.Chrome
+}
+
+// ForwardStatus describes one "forward" upstream's fixed dial target. It
+// carries no reachability verdict: a forward has no lifecycle the
+// controller owns (unlike a tunnel, which owns a listener), so whether the
+// endpoint answers is probed on demand by the UI — see ProbeForwards.
+type ForwardStatus struct {
+	Name string
+	// Addr is the upstream's configured fixed dial target ("host:port").
+	Addr string
 }
 
 // TunnelStatus describes one ssh tunnel's SOCKS5 listener and SSH
@@ -137,13 +187,7 @@ func (c *ProxyController) Snapshot() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return Status{
-		State:      c.state,
-		ListenAddr: c.listen,
-		ConfigPath: c.cfgPath,
-		LastError:  c.lastErr,
-		Tunnels:    c.tunnelStatusLocked(),
-	}
+	return c.statusLocked()
 }
 
 // Subscribe registers a listener for state changes. The returned function
@@ -363,8 +407,10 @@ func (c *ProxyController) StopTunnel(name string) error {
 
 	cancel()
 
-	if done != nil {
-		<-done
+	if !waitDone([]chan struct{}{done}, ShutdownTimeout) {
+		c.logger.Warn("stop tunnel", "name", name, "err", errShutdownTimeout)
+
+		return errors.Wrapf(errShutdownTimeout, "tunnel %q", name)
 	}
 
 	return nil
@@ -446,13 +492,11 @@ func (c *ProxyController) Stop() error {
 		cancel()
 	}
 
-	if done != nil {
-		<-done
-	}
-
-	for _, d := range tunnelDones {
-		<-d
-	}
+	// One deadline covers the proxy and every tunnel, so a wedged listener
+	// cannot stack ShutdownTimeout per goroutine. State is cleared either
+	// way — the contexts are cancelled and the listeners closed, so a
+	// straggler goroutine cannot accept new connections.
+	timedOut := !waitDone(append([]chan struct{}{done}, tunnelDones...), ShutdownTimeout)
 
 	c.mu.Lock()
 	c.tunnels = nil
@@ -461,12 +505,20 @@ func (c *ProxyController) Stop() error {
 	c.baseCtx = nil
 	c.mu.Unlock()
 
+	if timedOut {
+		c.logger.Warn("stop", "err", errShutdownTimeout)
+
+		return errShutdownTimeout
+	}
+
 	return nil
 }
 
-// Restart stops then starts.
+// Restart stops then starts. A Stop that times out waiting for a wedged
+// listener does not abort the restart: the listener is already closed, so
+// Start can rebind, and giving up here would leave the proxy down.
 func (c *ProxyController) Restart() error {
-	if err := c.Stop(); err != nil {
+	if err := c.Stop(); err != nil && !errors.Is(err, errShutdownTimeout) {
 		return err
 	}
 
@@ -520,13 +572,7 @@ func (c *ProxyController) fail(err error) {
 
 func (c *ProxyController) notify() {
 	c.mu.Lock()
-	status := Status{
-		State:      c.state,
-		ListenAddr: c.listen,
-		ConfigPath: c.cfgPath,
-		LastError:  c.lastErr,
-		Tunnels:    c.tunnelStatusLocked(),
-	}
+	status := c.statusLocked()
 	listeners := append([]func(Status){}, c.listeners...)
 	c.mu.Unlock()
 
@@ -535,6 +581,38 @@ func (c *ProxyController) notify() {
 			fn(status)
 		}
 	}
+}
+
+// statusLocked builds a Status snapshot. Callers must hold c.mu.
+func (c *ProxyController) statusLocked() Status {
+	st := Status{
+		State:      c.state,
+		ListenAddr: c.listen,
+		ConfigPath: c.cfgPath,
+		LastError:  c.lastErr,
+		Tunnels:    c.tunnelStatusLocked(),
+	}
+
+	if c.cfg != nil {
+		st.Chrome = c.cfg.Chrome
+		st.Forwards = forwardStatus(c.cfg)
+	}
+
+	return st
+}
+
+// forwardStatus lists the config's "forward" upstreams, sorted by name so
+// the menu order is stable across rebuilds.
+func forwardStatus(cfg *config.Config) []ForwardStatus {
+	out := make([]ForwardStatus, 0, len(cfg.Upstreams))
+
+	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
+		if u := cfg.Upstreams[name]; u.Type == config.UpstreamForward {
+			out = append(out, ForwardStatus{Name: name, Addr: u.Addr})
+		}
+	}
+
+	return out
 }
 
 // tunnelStatusLocked builds the []TunnelStatus snapshot from c.tunnels.

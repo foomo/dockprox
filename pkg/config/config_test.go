@@ -27,6 +27,16 @@ func TestValidate_OK(t *testing.T) {
 	}
 }
 
+func TestValidate_ForwardOK(t *testing.T) {
+	c := cfgWith(
+		map[string]config.Upstream{"cluster-a": {Type: "forward", Addr: "127.0.0.1:10310"}},
+		config.Rule{Match: "*.a.local.gd", Upstream: "cluster-a"},
+	)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidate_Errors(t *testing.T) {
 	bad := []struct {
 		name string
@@ -47,6 +57,15 @@ func TestValidate_Errors(t *testing.T) {
 			Listen:    "127.0.0.1:8888",
 			Upstreams: map[string]config.Upstream{"j": {Type: "weird"}},
 		}, "type"},
+		{"forward without addr", cfgWith(
+			map[string]config.Upstream{"c": {Type: "forward"}},
+		), "addr"},
+		{"forward with malformed addr", cfgWith(
+			map[string]config.Upstream{"c": {Type: "forward", Addr: "127.0.0.1"}},
+		), "addr"},
+		{"forward without host", cfgWith(
+			map[string]config.Upstream{"c": {Type: "forward", Addr: ":10310"}},
+		), "host required"},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {

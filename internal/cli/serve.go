@@ -228,6 +228,8 @@ func parseUpstreamFlag(s string) (string, config.Upstream, error) {
 		}
 
 		return name, u, nil
+	case strings.HasPrefix(raw, "forward://"):
+		return name, config.Upstream{Type: config.UpstreamForward, Addr: strings.TrimPrefix(raw, "forward://")}, nil
 	case raw == "direct":
 		return name, config.Upstream{Type: config.UpstreamDirect}, nil
 	default:

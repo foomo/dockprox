@@ -41,6 +41,25 @@ func TestParseUpstreamFlag_SSHNoPort(t *testing.T) {
 	}
 }
 
+func TestParseUpstreamFlag_Forward(t *testing.T) {
+	name, u, err := parseUpstreamFlag("cluster-a=forward://127.0.0.1:10310")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if name != "cluster-a" {
+		t.Fatalf("name=%q", name)
+	}
+
+	if u.Type != config.UpstreamForward {
+		t.Fatalf("type=%q", u.Type)
+	}
+
+	if u.Addr != "127.0.0.1:10310" {
+		t.Fatalf("addr=%q", u.Addr)
+	}
+}
+
 func TestParseUpstreamFlag_SSHBadPort(t *testing.T) {
 	_, _, err := parseUpstreamFlag("jump=ssh://bastion.example.com:notaport")
 	if err == nil || !strings.Contains(err.Error(), "port") {
