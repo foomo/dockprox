@@ -132,11 +132,12 @@ type TunnelStatus struct {
 	// State reflects whether this tunnel's SOCKS5 listener is currently
 	// accepting connections.
 	State TunnelState
-	// ConnState is the last known state of the underlying SSH connection:
-	// ConnUnknown means no dial has been attempted yet (the lazy-connect
-	// idle state), distinct from ConnDisconnected (a dial was attempted
-	// and failed, or the client was closed). It is a passive signal (see
-	// sshclient.Client.State) and is always ConnUnknown when State is
+	// ConnState is the state of the underlying SSH connection: ConnUnknown
+	// means no dial has been attempted yet (the lazy-connect idle state),
+	// distinct from ConnDisconnected (a dial was attempted and failed, or
+	// the client was closed) and from ConnConnecting (a dial is in flight
+	// right now). Every value but ConnConnecting is a passive signal — see
+	// sshclient.Client.State. Always ConnUnknown when State is
 	// TunnelStopped.
 	ConnState sshclient.ConnState
 }
@@ -418,7 +419,17 @@ func (c *ProxyController) StopTunnel(name string) error {
 
 // StartTunnel rebinds the named tunnel's SOCKS5 listener, reusing the same
 // upstream's dialer (and its underlying SSH connection state) from the
-// running registry. Idempotent if already running.
+// running registry, and eagerly establishes the SSH connection in the
+// background. Idempotent if already running.
+//
+// The listener binds synchronously — that is fast and its failure is what
+// callers need reported — while the SSH connection is established in a
+// goroutine, because that dial can block for a TCP connect plus handshake
+// and, with an agent that asks for confirmation, for as long as it takes
+// the user to approve. StartTunnel therefore returns as soon as the tunnel
+// is accepting connections; a failed dial is logged and leaves the tunnel
+// listening, with connections falling back to the lazy dial they have
+// always used.
 func (c *ProxyController) StartTunnel(name string) error {
 	c.mu.Lock()
 
@@ -462,6 +473,7 @@ func (c *ProxyController) StartTunnel(name string) error {
 
 	c.serveTunnel(h, tctx)
 	c.notify()
+	c.connectTunnel(h, tctx)
 
 	return nil
 }
@@ -553,6 +565,40 @@ func (c *ProxyController) serveTunnel(h *tunnelHandle, tctx context.Context) {
 			cur.done = nil
 		}
 		c.mu.Unlock()
+		c.notify()
+	}()
+}
+
+// connectTunnel establishes h's SSH connection in the background, notifying
+// when the dial starts and again when it settles, so the menu can move the
+// tunnel's glyph from idle to connecting to connected. A dialer that is not
+// SSH-backed (or a tunnel that is already connected) costs nothing: Connect
+// is idempotent.
+//
+// tctx is h's own context, so a StopTunnel or a whole-proxy Stop cancels an
+// in-flight dial rather than leaving it to run against a tunnel that is
+// already gone.
+func (c *ProxyController) connectTunnel(h *tunnelHandle, tctx context.Context) {
+	sd, ok := h.dialer.(*upstream.SSHDialer)
+	if !ok {
+		return
+	}
+
+	go func() {
+		// Connect publishes ConnConnecting before it does anything that can
+		// block, so notifying once here paints the connecting glyph; the
+		// notify after it returns paints the outcome.
+		c.notify()
+
+		if err := sd.Connect(tctx); err != nil {
+			// Not fatal: the listener stays up and each connection
+			// retries the dial lazily, so this is the same state the
+			// tunnel would have been in without the eager connect.
+			if tctx.Err() == nil {
+				c.logger.Warn("connect tunnel", "name", h.name, "err", err)
+			}
+		}
+
 		c.notify()
 	}()
 }
