@@ -78,7 +78,10 @@ func LaunchChrome(ctx context.Context, listenAddr string, cfg *config.Chrome) er
 	// Unlike a direct exec, `open` resolves the app and returns quickly, so
 	// wait for it: its exit status is the only signal that the app name or
 	// bundle ID was wrong. Chrome keeps running after `open` exits.
-	cmd := buildChromeCommand(listenAddr, dir, cfg)
+	// contextcheck wants ctx threaded through, but buildChromeCommand must
+	// not carry it: see the comment above on why exec.CommandContext(ctx, ...)
+	// would wrongly turn the launch deadline into a lifetime cap on Chrome.
+	cmd := buildChromeCommand(listenAddr, dir, cfg) //nolint:contextcheck
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -133,7 +136,7 @@ func buildChromeCommand(
 		args = append(args, cfg.Flags...)
 	}
 
-	return exec.Command("open", args...)
+	return exec.CommandContext(context.Background(), "open", args...)
 }
 
 // isBundleID reports whether s looks like a reverse-DNS bundle identifier

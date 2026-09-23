@@ -23,39 +23,6 @@ const probeBudget = 2 * time.Second
 // stalled network home directory.
 const launchTimeout = 10 * time.Second
 
-// runBusy runs fn off the UI thread, holding the tray in its busy state
-// until it returns. Every menu action that touches the filesystem, binds a
-// listener, or waits on a goroutine goes through here: Wails dispatches
-// OnClick on the UI thread, so doing that work inline freezes the menu bar
-// for the duration.
-//
-// The CompareAndSwap below is what prevents overlapping actions: a second
-// click while one is in flight is rejected outright. The menu is
-// deliberately NOT rebuilt to paint that busy state — doing so greyed out
-// the row the user had just clicked (and every other row) for as long as
-// the action ran, which for a tunnel means the whole SSH dial including any
-// agent confirmation prompt. The guard does not need the menu's help.
-func (t *Tray) runBusy(label string, fn func() error) {
-	if !t.busy.CompareAndSwap(false, true) {
-		t.logger.Warn("busy", "action", label)
-
-		return
-	}
-
-	go func() {
-		if err := fn(); err != nil {
-			t.logger.Warn(label, "err", err)
-		}
-
-		t.busy.Store(false)
-
-		application.InvokeAsync(func() {
-			t.applyIcon(t.ctrl.Snapshot().State)
-			t.rebuildMenu()
-		})
-	}()
-}
-
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
 	app     *application.App
@@ -118,6 +85,39 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 	t.systray.OnRightClick(open)
 
 	return t
+}
+
+// runBusy runs fn off the UI thread, holding the tray in its busy state
+// until it returns. Every menu action that touches the filesystem, binds a
+// listener, or waits on a goroutine goes through here: Wails dispatches
+// OnClick on the UI thread, so doing that work inline freezes the menu bar
+// for the duration.
+//
+// The CompareAndSwap below is what prevents overlapping actions: a second
+// click while one is in flight is rejected outright. The menu is
+// deliberately NOT rebuilt to paint that busy state — doing so greyed out
+// the row the user had just clicked (and every other row) for as long as
+// the action ran, which for a tunnel means the whole SSH dial including any
+// agent confirmation prompt. The guard does not need the menu's help.
+func (t *Tray) runBusy(label string, fn func() error) {
+	if !t.busy.CompareAndSwap(false, true) {
+		t.logger.Warn("busy", "action", label)
+
+		return
+	}
+
+	go func() {
+		if err := fn(); err != nil {
+			t.logger.Warn(label, "err", err)
+		}
+
+		t.busy.Store(false)
+
+		application.InvokeAsync(func() {
+			t.applyIcon(t.ctrl.Snapshot().State)
+			t.rebuildMenu()
+		})
+	}()
 }
 
 // refreshForwards probes the configured forwards off the UI thread and
@@ -244,6 +244,7 @@ func (t *Tray) rebuildMenu() {
 			// "?" until the first probe returns, so an unprobed forward is
 			// not misreported as down.
 			glyph := "?"
+
 			if up != nil {
 				if reachable, ok := (*up)[fs.Name]; ok {
 					glyph = "○"

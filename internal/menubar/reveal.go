@@ -23,5 +23,5 @@ const releasesURL = "https://github.com/foomo/dockprox/releases"
 // openReleases opens the GitHub releases page in the default browser.
 // Returns nil if the launch was started (does not wait for completion).
 func openReleases() error {
-	return exec.Command("open", releasesURL).Start() //nolint:gosec // fixed constant URL, not user input
+	return exec.CommandContext(context.Background(), "open", releasesURL).Start()
 }
