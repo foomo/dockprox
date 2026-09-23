@@ -38,13 +38,13 @@ check: tidy generate lint.fix test.race audit
 ## Run linter
 lint:
 	@echo "〉golangci-lint run"
-	golangci-lint run --max-same-issues 0 --max-issues-per-linter 0
+	@golangci-lint run
 
 .PHONY: lint.fix
 ## Fix lint violations
 lint.fix:
 	@echo "〉golangci-lint run fix"
-	golangci-lint run --fix --max-same-issues 0 --max-issues-per-linter 0
+	@golangci-lint run --fix
 
 .PHONY: generate
 ## Run go generate
@@ -85,6 +85,11 @@ endif
 
 .PHONY: package.menubar
 ## Package macOS menubar app into dist/Dockprox.app (darwin only)
+# CODESIGN_IDENTITY selects the signing identity. The "-" default is an
+# ad-hoc signature, which needs no certificate but produces a new code hash
+# on every build. Override it with a Developer ID for a stable identity —
+# see the warning printed after signing.
+package.menubar: CODESIGN_IDENTITY ?= -
 package.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
 package.menubar: build.menubar
 ifeq ($(shell uname),Darwin)
@@ -94,7 +99,16 @@ ifeq ($(shell uname),Darwin)
 	@iconutil -c icns cmd/dockprox-menubar/icon.iconset -o dist/Dockprox.app/Contents/Resources/icon.icns
 	@sed 's/__VERSION__/$(VERSION)/g' cmd/dockprox-menubar/Info.plist > dist/Dockprox.app/Contents/Info.plist
 	@cp bin/dockprox-menubar dist/Dockprox.app/Contents/MacOS/dockprox-menubar
-	@codesign --force --deep --sign - dist/Dockprox.app
+	@echo "〉codesign (identity: $(CODESIGN_IDENTITY))"
+	@codesign --force --deep --sign "$(CODESIGN_IDENTITY)" dist/Dockprox.app
+	@if [ "$(CODESIGN_IDENTITY)" = "-" ]; then \
+		echo "   ⚠ ad-hoc signature: the code hash changes on every build, so"; \
+		echo "     clients that authorize by signature (1Password's SSH agent)"; \
+		echo "     will treat each rebuild as a new app and stop prompting."; \
+		echo "     Set CODESIGN_IDENTITY to a Developer ID for a stable identity:"; \
+		echo "       security find-identity -v -p codesigning"; \
+		echo "       make package.menubar CODESIGN_IDENTITY=\"Developer ID Application: ...\""; \
+	fi
 else
 	$(error package.menubar requires macOS)
 endif
@@ -124,7 +138,6 @@ install.debug:
 ## Run security audit
 audit:
 	@echo "〉security audit"
-	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@govulncheck ./...
 
 ### Dependencies
@@ -214,4 +227,3 @@ help:
 		} \
 	}' $(MAKEFILE_LIST)
 	@echo ""
-

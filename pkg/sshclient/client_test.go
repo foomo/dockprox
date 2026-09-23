@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -8,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -168,6 +171,136 @@ func TestClient_State_ConnectedAfterSuccessfulGet(t *testing.T) {
 
 	if got := c.State(); got != ConnConnected {
 		t.Fatalf("State()=%v after second Get, want ConnConnected", got)
+	}
+}
+
+// TestClient_State_DoesNotBlockOnInFlightGet is the regression test for the
+// menu bar freezing while an ssh tunnel's SOCKS5 listener had a connection
+// waiting on the handshake. State() is called from the UI thread on every
+// menu rebuild; if it took the same mutex Get holds for the length of a
+// dial, the whole menu bar stalled until the handshake timed out.
+func TestClient_State_DoesNotBlockOnInFlightGet(t *testing.T) {
+	// A listener that accepts the TCP connection but never speaks SSH, so
+	// Get blocks in the handshake while holding c.mu.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = ln.Close() })
+
+	accepted := make(chan struct{})
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+
+		defer conn.Close()
+
+		close(accepted)
+
+		<-t.Context().Done()
+	}()
+
+	// Any well-formed fingerprint: the server never gets far enough to
+	// present a host key, so the callback is never invoked.
+	c := NewClient(testTarget(t, ln.Addr().String(), "SHA256:"+strings.Repeat("A", 43)))
+
+	go func() { _, _ = c.Get(context.Background()) }()
+
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the connection")
+	}
+
+	done := make(chan ConnState, 1)
+	go func() { done <- c.State() }()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("State() blocked behind an in-flight Get")
+	}
+}
+
+func TestClient_State_ConnectingWhileDialInFlight(t *testing.T) {
+	// Accepts the TCP connection but never speaks SSH, so the handshake
+	// stays in flight for the duration of the test.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = ln.Close() })
+
+	accepted := make(chan struct{})
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+
+		defer conn.Close()
+
+		close(accepted)
+
+		<-t.Context().Done()
+	}()
+
+	c := NewClient(testTarget(t, ln.Addr().String(), "SHA256:"+strings.Repeat("A", 43)))
+
+	go func() { _, _ = c.Get(context.Background()) }()
+
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the connection")
+	}
+
+	// The dial is now parked in the SSH handshake.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.State() == ConnConnecting {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("State()=%v during an in-flight dial, want ConnConnecting", c.State())
+}
+
+func TestClient_MarkConnecting(t *testing.T) {
+	c := NewClient(&Target{Host: "127.0.0.1", Port: 1})
+
+	if got := c.State(); got != ConnUnknown {
+		t.Fatalf("State()=%v before MarkConnecting, want ConnUnknown", got)
+	}
+
+	c.MarkConnecting()
+
+	if got := c.State(); got != ConnConnecting {
+		t.Fatalf("State()=%v after MarkConnecting, want ConnConnecting", got)
+	}
+}
+
+func TestConnState_String(t *testing.T) {
+	for _, tc := range []struct {
+		state ConnState
+		want  string
+	}{
+		{ConnUnknown, "unknown"},
+		{ConnConnected, "connected"},
+		{ConnDisconnected, "disconnected"},
+		{ConnConnecting, "connecting"},
+	} {
+		if got := tc.state.String(); got != tc.want {
+			t.Errorf("ConnState(%d).String()=%q, want %q", tc.state, got, tc.want)
+		}
 	}
 }
 

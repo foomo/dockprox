@@ -51,6 +51,22 @@ func (d *SSHDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error)
 	return c, nil
 }
 
+// Connect establishes the SSH connection without opening a target channel,
+// so a tunnel can be brought up before it carries any traffic. Dial does
+// this implicitly on first use; Connect only makes it explicit and eager.
+// Idempotent — a live connection is reused after a keepalive probe.
+//
+// State() reports ConnConnecting from the moment this is called until the
+// attempt settles, so a caller that notifies its observers immediately
+// afterwards will publish the in-flight state rather than the stale one.
+func (d *SSHDialer) Connect(ctx context.Context) error {
+	d.cli.MarkConnecting()
+
+	_, err := d.cli.Get(ctx)
+
+	return err
+}
+
 // Close tears down the SSH connection.
 func (d *SSHDialer) Close() error { return d.cli.Close() }
 
