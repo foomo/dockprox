@@ -1,8 +1,10 @@
 .*
+*.gz
 *.zip
 *.tar
 *.tgz
 *.pem
+*.key
 *.out
 *.log
 bin/
@@ -53,5 +55,3 @@ tmp/
 docs/.vitepress/*
 !docs/.vitepress/theme/
 !docs/.vitepress/config.mts
-
-/docs/superpowers/

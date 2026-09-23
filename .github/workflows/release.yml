@@ -99,7 +99,7 @@ jobs:
             CGO_LDFLAGS="-arch ${CARCH}" \
             GOOS=darwin GOARCH="${ARCH}" \
               go build -tags=safe -trimpath \
-              -ldflags="-s -w -X github.com/foomo/dockprox/internal/cli.version=${V} -X github.com/foomo/dockprox/internal/cli.commitHash=${{ github.sha }}" \
+              -ldflags="-s -w -X github.com/foomo/dockprox/internal/menubar.version=${V}" \
               -o "$APP/Contents/MacOS/dockprox-menubar" ./cmd/dockprox-menubar
             # TODO: ad-hoc signing only, unsigned for Gatekeeper on other
             # machines. Swap for `codesign --sign "Developer ID Application: ..."

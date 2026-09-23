@@ -10,14 +10,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
-
-// restartBusyFloor is the minimum time the tray shows the disabled icon
-// after a Restart click, so the feedback is visible even though the
-// underlying Stop+Start cycle typically completes in microseconds.
-const restartBusyFloor = 500 * time.Millisecond
 
 // probeBudget bounds a whole forward-probe round. The probes run
 // concurrently and each is capped at ProbeTimeout, so this is a backstop
@@ -28,45 +22,6 @@ const probeBudget = 2 * time.Second
 // Both are local, so this only trips if the filesystem is wedged — e.g. a
 // stalled network home directory.
 const launchTimeout = 10 * time.Second
-
-// runBusy runs fn off the UI thread, holding the tray in its busy state
-// until it returns. Every menu action that touches the filesystem, binds a
-// listener, or waits on a goroutine goes through here: Wails dispatches
-// OnClick on the UI thread, so doing that work inline freezes the menu bar
-// for the duration.
-//
-// The busy flag both dims the icon and disables the actions that must not
-// overlap, so a second click cannot race the first.
-func (t *Tray) runBusy(label string, fn func() error) {
-	if !t.busy.CompareAndSwap(false, true) {
-		t.logger.Warn("busy", "action", label)
-
-		return
-	}
-
-	// Reflect the busy state immediately; we are still on the UI thread.
-	t.applyIcon(t.ctrl.Snapshot().State)
-	t.rebuildMenu()
-
-	go func() {
-		start := time.Now()
-
-		if err := fn(); err != nil {
-			t.logger.Warn(label, "err", err)
-		}
-
-		if remaining := restartBusyFloor - time.Since(start); remaining > 0 {
-			time.Sleep(remaining)
-		}
-
-		t.busy.Store(false)
-
-		application.InvokeAsync(func() {
-			t.applyIcon(t.ctrl.Snapshot().State)
-			t.rebuildMenu()
-		})
-	}()
-}
 
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
@@ -132,6 +87,39 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 	return t
 }
 
+// runBusy runs fn off the UI thread, holding the tray in its busy state
+// until it returns. Every menu action that touches the filesystem, binds a
+// listener, or waits on a goroutine goes through here: Wails dispatches
+// OnClick on the UI thread, so doing that work inline freezes the menu bar
+// for the duration.
+//
+// The CompareAndSwap below is what prevents overlapping actions: a second
+// click while one is in flight is rejected outright. The menu is
+// deliberately NOT rebuilt to paint that busy state — doing so greyed out
+// the row the user had just clicked (and every other row) for as long as
+// the action ran, which for a tunnel means the whole SSH dial including any
+// agent confirmation prompt. The guard does not need the menu's help.
+func (t *Tray) runBusy(label string, fn func() error) {
+	if !t.busy.CompareAndSwap(false, true) {
+		t.logger.Warn("busy", "action", label)
+
+		return
+	}
+
+	go func() {
+		if err := fn(); err != nil {
+			t.logger.Warn(label, "err", err)
+		}
+
+		t.busy.Store(false)
+
+		application.InvokeAsync(func() {
+			t.applyIcon(t.ctrl.Snapshot().State)
+			t.rebuildMenu()
+		})
+	}()
+}
+
 // refreshForwards probes the configured forwards off the UI thread and
 // rebuilds the menu with the result. A probe already in flight wins; this
 // call then returns immediately rather than queueing a duplicate.
@@ -174,9 +162,15 @@ func (t *Tray) refreshAutostart() {
 	t.autostart.Store(enabled)
 }
 
+// applyIcon sets the tray icon from the proxy lifecycle state alone. It
+// deliberately ignores t.busy: most menu actions (toggling one tunnel,
+// launching Chrome, toggling autostart) leave the proxy running, so dimming
+// the global icon for them read as the proxy restarting. Actions that do
+// change the state — Start, Stop, Restart — move the icon on their own,
+// because the controller notifies.
 func (t *Tray) applyIcon(s State) {
 	var icon []byte
-	if s == StateRunning && !t.busy.Load() {
+	if s == StateRunning {
 		icon = iconRunning
 	} else {
 		icon = iconStopped
@@ -214,23 +208,14 @@ func (t *Tray) rebuildMenu() {
 
 		for _, ts := range snap.Tunnels {
 			name := ts.Name
-			listening := ts.State == TunnelListening
 
-			glyph := "○"
-			addr := "-"
-
-			if listening {
-				addr = ts.Addr
-
-				if ts.ConnState == sshclient.ConnConnected {
-					glyph = "◉"
-				}
-			}
+			// Glyph and click action are derived together — see tunnelRow.
+			glyph, addr, action := tunnelRow(ts)
 
 			item := menu.Add(fmt.Sprintf("%s %s: %s", glyph, name, addr))
-			item.SetEnabled(snap.State == StateRunning && !t.busy.Load())
+			item.SetEnabled(snap.State == StateRunning)
 
-			if listening {
+			if action == tunnelActionStop {
 				item.OnClick(func(_ *application.Context) {
 					t.runBusy("stop tunnel "+name, func() error {
 						return t.ctrl.StopTunnel(name)
@@ -259,6 +244,7 @@ func (t *Tray) rebuildMenu() {
 			// "?" until the first probe returns, so an unprobed forward is
 			// not misreported as down.
 			glyph := "?"
+
 			if up != nil {
 				if reachable, ok := (*up)[fs.Name]; ok {
 					glyph = "○"
@@ -277,7 +263,7 @@ func (t *Tray) rebuildMenu() {
 	menu.AddSeparator()
 
 	chrome := menu.Add("↗ Open Chrome")
-	chrome.SetEnabled(snap.State == StateRunning && !t.busy.Load())
+	chrome.SetEnabled(snap.State == StateRunning)
 	chrome.OnClick(func(_ *application.Context) {
 		t.runBusy("launch chrome", func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), launchTimeout)
@@ -291,22 +277,18 @@ func (t *Tray) rebuildMenu() {
 	menu.AddSeparator()
 
 	if snap.State == StateRunning {
-		stop := menu.Add("⏹︎ Stop")
-		stop.SetEnabled(!t.busy.Load())
-		stop.OnClick(func(_ *application.Context) {
+		menu.Add("⏹︎ Stop").OnClick(func(_ *application.Context) {
 			t.runBusy("stop", t.ctrl.Stop)
 		})
 	} else {
-		start := menu.Add("▶︎ Start")
-		start.SetEnabled(!t.busy.Load())
-		start.OnClick(func(_ *application.Context) {
+		menu.Add("▶︎ Start").OnClick(func(_ *application.Context) {
 			t.runBusy("start", t.ctrl.Start)
 		})
 	}
 
 	menu.Add("↺ Restart").OnClick(func(_ *application.Context) {
 		t.runBusy("restart", t.ctrl.Restart)
-	}).SetEnabled(snap.State == StateRunning && !t.busy.Load())
+	}).SetEnabled(snap.State == StateRunning)
 
 	// Read the cached value rather than calling Autostart.IsEnabled() here:
 	// that is a synchronous SMAppService call, and rebuildMenu runs on the

@@ -9,6 +9,7 @@ run:
 linters:
   default: all
   disable:
+    # Project specific
     - exhaustruct_v5
     - paralleltest
     - testpackage

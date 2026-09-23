@@ -29,6 +29,7 @@ func DefaultLogPath() (string, error) {
 	}
 
 	var dirname string
+
 	switch runtime.GOOS {
 	case "darwin", "ios":
 		dirname = "org.foomo.dockprox"

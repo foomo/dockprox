@@ -29,18 +29,14 @@ func ProbeForwards(ctx context.Context, forwards []ForwardStatus) map[string]boo
 	)
 
 	for _, f := range forwards {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			up := probeAddr(ctx, f.Addr)
 
 			mu.Lock()
 			defer mu.Unlock()
 
 			out[f.Name] = up
-		}()
+		})
 	}
 
 	wg.Wait()
