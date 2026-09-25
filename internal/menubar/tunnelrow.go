@@ -59,5 +59,5 @@ func connRow(ts TunnelStatus) (label string, ok bool) { //nolint:nonamedreturns 
 	case sshclient.ConnUnknown:
 	}
 
-	return "◎ not connected", true
+	return "◎ ssh not connected", true
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,14 +17,28 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
+// shortSock returns a unix socket path in a fresh temp dir. Unix socket
+// paths are capped at 104 bytes on macOS, and t.TempDir() embeds the test
+// name under $TMPDIR (/var/folders/...), which overflows it.
+func shortSock(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "ag")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	return filepath.Join(dir, "a.sock")
+}
+
 // startStalledAgent listens on a unix socket that accepts connections and
 // then never replies, standing in for a locked or wedged 1Password agent.
 func startStalledAgent(t *testing.T) string {
 	t.Helper()
 
-	// Keep the path short: unix socket paths are capped near 104 bytes, and
-	// t.TempDir() under a long test name can approach that.
-	sock := filepath.Join(t.TempDir(), "a.sock")
+	sock := shortSock(t)
 
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -54,7 +69,7 @@ func startStalledAgent(t *testing.T) string {
 func serveAgent(t *testing.T, a agent.Agent) string {
 	t.Helper()
 
-	sock := filepath.Join(t.TempDir(), "a.sock")
+	sock := shortSock(t)
 
 	ln, err := net.Listen("unix", sock)
 	if err != nil {

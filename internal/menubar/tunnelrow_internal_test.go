@@ -87,11 +87,11 @@ func TestConnRow(t *testing.T) {
 		conn sshclient.ConnState
 		want string
 	}{
-		{sshclient.ConnUnknown, "◎ not connected"},
-		{sshclient.ConnConnecting, "⊙ connecting"},
-		{sshclient.ConnAwaitingApproval, "☎︎ awaiting approval (1Password menu → SSH request waiting)"},
-		{sshclient.ConnDisconnected, "⚠︎ connection failed"},
-		{sshclient.ConnConnected, "◉ connected"},
+		{sshclient.ConnUnknown, "◎ ssh not connected"},
+		{sshclient.ConnConnecting, "⊙ ssh connecting"},
+		{sshclient.ConnAwaitingApproval, "☎︎ ssh awaiting approval"},
+		{sshclient.ConnDisconnected, "⚠︎ ssh connection failed"},
+		{sshclient.ConnConnected, "◉ ssh connected"},
 	} {
 		got, ok := connRow(TunnelStatus{State: TunnelListening, ConnState: tc.conn})
 		if !ok || got != tc.want {

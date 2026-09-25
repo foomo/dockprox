@@ -136,7 +136,7 @@ func buildChromeCommand(
 		args = append(args, cfg.Flags...)
 	}
 
-	return exec.CommandContext(context.Background(), "open", args...)
+	return exec.Command("open", args...) //nolint:noctx // launch deadline must not cap the browser lifetime
 }
 
 // isBundleID reports whether s looks like a reverse-DNS bundle identifier
