@@ -6,6 +6,14 @@ import (
 	"github.com/foomo/dockprox/pkg/sshclient"
 )
 
+var allConnStates = []sshclient.ConnState{
+	sshclient.ConnUnknown,
+	sshclient.ConnConnected,
+	sshclient.ConnDisconnected,
+	sshclient.ConnConnecting,
+	sshclient.ConnAwaitingApproval,
+}
+
 func TestTunnelRow(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -22,35 +30,18 @@ func TestTunnelRow(t *testing.T) {
 			wantAct:   tunnelActionStart,
 		},
 		{
-			// The regression: a listener bound by Start() that nothing has
-			// dialled through yet. It must not read as "stopped", because
-			// clicking it stops the tunnel.
+			// A listener bound by Start() that nothing has dialled through
+			// yet must not read as "stopped", because clicking it stops the
+			// tunnel.
 			name:      "listening, never dialled",
 			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnUnknown},
-			wantGlyph: "◎",
+			wantGlyph: "◉",
 			wantAddr:  "127.0.0.1:1080",
 			wantAct:   tunnelActionStop,
 		},
 		{
-			name:      "listening, dial in flight",
-			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnConnecting},
-			wantGlyph: "⊙",
-			wantAddr:  "127.0.0.1:1080",
-			wantAct:   tunnelActionStop,
-		},
-		{
-			// A locked password manager or an unreachable bastion lands
-			// here. It must be distinguishable from the never-dialled row
-			// above, which looks identical otherwise.
 			name:      "listening, dial failed",
 			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnDisconnected},
-			wantGlyph: "⚠︎",
-			wantAddr:  "127.0.0.1:1080",
-			wantAct:   tunnelActionStop,
-		},
-		{
-			name:      "listening and connected",
-			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnConnected},
 			wantGlyph: "◉",
 			wantAddr:  "127.0.0.1:1080",
 			wantAct:   tunnelActionStop,
@@ -74,39 +65,47 @@ func TestTunnelRow(t *testing.T) {
 	}
 }
 
-// TestTunnelRow_FailedIsDistinctFromIdle pins the distinction that made a
-// locked-1Password tunnel unreadable: a failed dial and a tunnel nothing has
-// dialled through are both "listening, not connected", but only one of them
-// is a problem the user has to act on.
-func TestTunnelRow_FailedIsDistinctFromIdle(t *testing.T) {
-	idle, _, _ := tunnelRow(TunnelStatus{State: TunnelListening, ConnState: sshclient.ConnUnknown})
-	failed, _, _ := tunnelRow(TunnelStatus{State: TunnelListening, ConnState: sshclient.ConnDisconnected})
-
-	if idle == failed {
-		t.Errorf("idle and failed tunnels share glyph %q", idle)
-	}
-}
-
-// TestTunnelRow_GlyphAgreesWithAction pins the invariant that the previous
-// bug broke: ○ means "click to start" and every other glyph means "click to
-// stop". A row that reads stopped while its click stops the tunnel makes
-// the first click look like it did nothing.
+// TestTunnelRow_GlyphAgreesWithAction pins the invariant: ○ means "click to
+// start" and every other glyph means "click to stop". A row that reads
+// stopped while its click stops the tunnel makes the first click look like
+// it did nothing.
 func TestTunnelRow_GlyphAgreesWithAction(t *testing.T) {
-	states := []sshclient.ConnState{
-		sshclient.ConnUnknown,
-		sshclient.ConnConnected,
-		sshclient.ConnDisconnected,
-		sshclient.ConnConnecting,
-	}
-
 	for _, tunnelState := range []TunnelState{TunnelListening, TunnelStopped} {
-		for _, connState := range states {
+		for _, connState := range allConnStates {
 			glyph, _, act := tunnelRow(TunnelStatus{State: tunnelState, ConnState: connState})
 
 			if (glyph == "○") != (act == tunnelActionStart) {
 				t.Errorf("State=%v ConnState=%v: glyph %q disagrees with action %v",
 					tunnelState, connState, glyph, act)
 			}
+		}
+	}
+}
+
+func TestConnRow(t *testing.T) {
+	for _, tc := range []struct {
+		conn sshclient.ConnState
+		want string
+	}{
+		{sshclient.ConnUnknown, "◎ ssh not connected"},
+		{sshclient.ConnConnecting, "⊙ ssh connecting"},
+		{sshclient.ConnAwaitingApproval, "☎︎ ssh awaiting approval"},
+		{sshclient.ConnDisconnected, "⚠︎ ssh connection failed"},
+		{sshclient.ConnConnected, "◉ ssh connected"},
+	} {
+		got, ok := connRow(TunnelStatus{State: TunnelListening, ConnState: tc.conn})
+		if !ok || got != tc.want {
+			t.Errorf("ConnState=%v: connRow = %q, %v; want %q, true", tc.conn, got, ok, tc.want)
+		}
+	}
+}
+
+// TestConnRow_HiddenWhenStopped: a stopped tunnel has no connection to show,
+// whatever state its client last reported.
+func TestConnRow_HiddenWhenStopped(t *testing.T) {
+	for _, connState := range allConnStates {
+		if label, ok := connRow(TunnelStatus{State: TunnelStopped, ConnState: connState}); ok {
+			t.Errorf("ConnState=%v: stopped tunnel shows conn row %q", connState, label)
 		}
 	}
 }

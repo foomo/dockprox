@@ -3,12 +3,27 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/foomo/dockprox/pkg/config"
 )
 
+// homeCacheLogPath is the expected DefaultLogPath for HOME=/home/whatever
+// with XDG_CACHE_HOME unset, mirroring os.UserCacheDir per GOOS.
+func homeCacheLogPath() string {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		return "/home/whatever/Library/Caches/org.foomo.dockprox/dockprox.log"
+	}
+
+	return "/home/whatever/.cache/dockprox/dockprox.log"
+}
+
 func TestDefaultLogPath_UsesXDGCacheHomeWhenSet(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "ios" {
+		t.Skip("os.UserCacheDir ignores XDG_CACHE_HOME on darwin")
+	}
+
 	t.Setenv("HOME", "/home/whatever")
 	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache-explicit")
 
@@ -31,7 +46,7 @@ func TestDefaultLogPath_FallsBackToHomeCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := "/home/whatever/.cache/dockprox/dockprox.log"; path != want {
+	if want := homeCacheLogPath(); path != want {
 		t.Errorf("got %q, want %q", path, want)
 	}
 }
@@ -45,7 +60,7 @@ func TestResolveLogPath_DefaultsWhenConfigEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := "/home/whatever/.cache/dockprox/dockprox.log"; path != want {
+	if want := homeCacheLogPath(); path != want {
 		t.Errorf("got %q, want %q", path, want)
 	}
 }

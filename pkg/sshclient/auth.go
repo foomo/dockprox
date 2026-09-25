@@ -2,8 +2,11 @@ package sshclient
 
 import (
 	"context"
+	"io"
 	"net"
+	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -17,10 +20,9 @@ import (
 // go (a laptop's agent restarts, a socket is remounted) and a cached conn
 // would outlive them.
 //
-// ctx should carry the whole attempt's deadline: it bounds the dial, and
-// its deadline is applied to the socket so it also bounds the signer
-// requests the handshake makes later.
-func (t *Target) authMethods(ctx context.Context) ([]ssh.AuthMethod, func(), error) {
+// ctx bounds the agent dial; att bounds every request on the agent socket
+// after it, including the signer requests the handshake makes later.
+func (t *Target) authMethods(ctx context.Context, att *attempt) ([]ssh.AuthMethod, func(), error) {
 	noop := func() {}
 
 	var methods []ssh.AuthMethod
@@ -49,7 +51,7 @@ func (t *Target) authMethods(ctx context.Context) ([]ssh.AuthMethod, func(), err
 		return methods, noop, nil
 	}
 
-	signers, cleanup, err := agentSigners(ctx, sock)
+	signers, cleanup, err := agentSigners(ctx, sock, att)
 	if err != nil {
 		return nil, noop, err
 	}
@@ -63,11 +65,15 @@ func (t *Target) authMethods(ctx context.Context) ([]ssh.AuthMethod, func(), err
 //
 // The lookup is invoked lazily — during the handshake, long after this
 // returns — and talks to the agent over this socket. ctx's cancellation does
-// not reach that I/O, so ctx's deadline is applied to the socket itself;
+// not reach that I/O, so the socket joins att and carries its deadline;
 // otherwise an agent that accepts the connection and then never answers (a
 // locked vault, a wedged helper) hangs the handshake indefinitely, holding
 // Client.mu and queueing every other connection through the upstream.
-func agentSigners(ctx context.Context, sock string) (func() ([]ssh.Signer, error), func(), error) {
+//
+// Sign requests get att's longer approval window: 1Password suppresses its
+// prompt for background apps, and the user has to open it from the
+// 1Password menu before it can be answered.
+func agentSigners(ctx context.Context, sock string, att *attempt) (func() ([]ssh.Signer, error), func(), error) {
 	var dialer net.Dialer
 
 	conn, err := dialer.DialContext(ctx, "unix", sock)
@@ -75,9 +81,55 @@ func agentSigners(ctx context.Context, sock string) (func() ([]ssh.Signer, error
 		return nil, func() {}, errors.Wrapf(err, "dial agent %s", sock)
 	}
 
-	if dl, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(dl)
+	att.add(conn)
+
+	ag := agent.NewClient(conn)
+
+	signers := func() ([]ssh.Signer, error) {
+		start := time.Now()
+
+		log.Debug("agent list", "sock", sock)
+
+		ss, err := ag.Signers()
+		log.Debug("agent list done", "sock", sock, "keys", len(ss), "dur", time.Since(start), "err", err)
+
+		for i, s := range ss {
+			if as, ok := s.(ssh.AlgorithmSigner); ok {
+				ss[i] = agentSigner{AlgorithmSigner: as, sock: sock, att: att}
+			}
+		}
+
+		return ss, err
 	}
 
-	return agent.NewClient(conn).Signers, func() { _ = conn.Close() }, nil
+	return signers, func() { _ = conn.Close() }, nil
+}
+
+// agentSigner gives agent sign requests the approval window and logs their
+// timing. It embeds ssh.AlgorithmSigner so RSA SHA-2 negotiation keeps
+// working.
+type agentSigner struct {
+	ssh.AlgorithmSigner
+
+	sock string
+	att  *attempt
+}
+
+func (s agentSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+func (s agentSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	fp := ssh.FingerprintSHA256(s.PublicKey())
+	start := time.Now()
+
+	log.Debug("agent sign", "sock", s.sock, "key", fp, "algo", algorithm)
+
+	s.att.signStart()
+	sig, err := s.AlgorithmSigner.SignWithAlgorithm(rand, data, algorithm)
+	s.att.signDone()
+
+	log.Debug("agent sign done", "sock", s.sock, "key", fp, "dur", time.Since(start), "err", err)
+
+	return sig, err
 }
