@@ -1,7 +1,7 @@
 # Menu bar app (macOS)
 
 A native menu bar (tray) app ships as a separate `dockprox-menubar` binary. It runs a `dockprox` proxy in-process and
-exposes Start / Stop / Restart / Open-Chrome / Reveal-logs-in-Finder / Reveal-config-in-Finder / Quit from the system
+exposes Start / Stop / Restart / Open-Chrome / Reveal-in-Finder (logs, config) / Quit from the system
 tray.
 
 ::: info Platform The menu bar app is **macOS only** (Wails-backed, requires cgo + macOS SDK). It is not part of the
@@ -74,17 +74,42 @@ Logs are written to `logFile` if set in the config, otherwise to the OS cache di
 | **Start**                   | Start the in-process proxy with the resolved config.                                                                                                                                              |
 | **Stop**                    | Stop the running proxy.                                                                                                                                                                           |
 | **Restart**                 | Stop, reload the config from disk, and start again. Disabled — and the tray icon dims — while a restart is in flight.                                                                             |
-| *(tunnel rows)*             | One row per SSH upstream with a `socks5Listen`, e.g. `◉ bastion: 127.0.0.1:1080`. Click a listening tunnel (`◉`) to stop it, or a stopped one (`○`) to start it, independently of the main proxy. |
+| *(tunnel rows)*             | One row per SSH upstream with a `socks5Listen`, e.g. `◉ bastion: 127.0.0.1:1080`. Click a listening tunnel (`◉`) to stop it, or a stopped one (`○`) to start it, independently of the main proxy. A listening tunnel has a read-only row below it with its SSH connection state — see [Tunnel connection](#tunnel-connection). |
 | *(forward rows)*            | One row per `forward` upstream with its fixed `addr`, e.g. `◉ staging: 127.0.0.1:8443`. Read-only — see [Forward status](#forward-status).                                                        |
 | **Open Chrome**             | Launch an isolated Chrome instance pointed at the proxy (see [Isolated Chrome](#isolated-chrome)). Only enabled while the proxy is running.                                                       |
 | **Start at Login**          | Toggle launching the app automatically at login — needed since dockprox must be running for a system-wide proxy setup to reach anything.                                                          |
-| **Reveal logs in Finder**   | Open the log file (see [Logging](#logging)) in Finder.                                                                                                                                            |
-| **Reveal config in Finder** | Open the resolved config file in Finder.                                                                                                                                                          |
+| **Reveal in Finder**        | Submenu: **Logs** opens the log file (see [Logging](#logging)), **Config** the resolved config file, in Finder.                                                                                   |
 | **Quit**                    | Stop the proxy and exit the app.                                                                                                                                                                  |
 
 Edit the resolved config file with any editor and use **Restart** to apply changes — there is no live-reload.
 
 Tunnel rows are only shown while the main proxy is running, and are disabled during a restart.
+
+## Tunnel connection
+
+Below each listening tunnel, a read-only row shows the state of the SSH connection behind it:
+
+| Glyph | Meaning                                                                                       |
+|-------|-----------------------------------------------------------------------------------------------|
+| `◎`   | Not connected yet. The tunnel connects when it starts, and again on demand.                   |
+| `⊙`   | Connecting.                                                                                   |
+| `☎︎`   | Waiting for you to approve the SSH key in your agent (see [1Password SSH agent](#1password-ssh-agent)). |
+| `⚠︎`   | The last connection attempt failed; the reason is in the log.                                 |
+| `◉`   | Connected.                                                                                    |
+
+The TCP connect and SSH handshake are bounded by 15s. While the agent holds a sign request (`☎︎`), the bound is 60s
+instead, so there is time to approve it. Requests that queue behind a failed attempt get its error rather than each
+retrying in turn, and stopping a tunnel aborts an attempt in flight.
+
+### 1Password SSH agent
+
+1Password [suppresses its approval prompt](https://developer.1password.com/docs/ssh/agent/authorization/) when the
+requesting app is not in the foreground. dockprox is a menu bar app and never is, so the prompt does not pop up: the
+1Password menu bar icon shows an indicator dot instead. While the tunnel shows `☎︎`, open the 1Password menu and select
+**SSH request waiting** to approve it.
+
+1Password remembers the approval for dockprox until it locks or quits, or for the time set under **Settings → Developer
+→ Remember key approval**. Checking **Approve for all applications** in the prompt covers dockprox too.
 
 ## Forward status
 

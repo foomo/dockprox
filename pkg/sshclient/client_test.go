@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,10 +298,138 @@ func TestConnState_String(t *testing.T) {
 		{ConnConnected, "connected"},
 		{ConnDisconnected, "disconnected"},
 		{ConnConnecting, "connecting"},
+		{ConnAwaitingApproval, "awaiting approval"},
 	} {
 		if got := tc.state.String(); got != tc.want {
 			t.Errorf("ConnState(%d).String()=%q, want %q", tc.state, got, tc.want)
 		}
+	}
+}
+
+func TestClient_OnStateChange_OnlyOnChange(t *testing.T) {
+	c := NewClient(&Target{Host: "127.0.0.1", Port: 1})
+
+	var calls atomic.Int32
+
+	c.OnStateChange(func() { calls.Add(1) })
+
+	c.MarkConnecting()
+	c.MarkConnecting()
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("OnStateChange fired %d times for one transition, want 1", got)
+	}
+}
+
+// startSilentServer accepts TCP connections and never speaks SSH, so a dial
+// parks in the handshake. Each accepted conn is closed once release is
+// closed. accepted counts connections.
+func startSilentServer(t *testing.T, release <-chan struct{}) (addr string, accepted *atomic.Int32) { //nolint:nonamedreturns
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = ln.Close() })
+
+	accepted = &atomic.Int32{}
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+
+			accepted.Add(1)
+
+			go func() {
+				defer conn.Close()
+
+				select {
+				case <-release:
+				case <-t.Context().Done():
+				}
+			}()
+		}
+	}()
+
+	return ln.Addr().String(), accepted
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met within 5s")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestClient_CancelAbortsDial: cancelling ctx (StopTunnel, Stop) must end a
+// dial parked in the handshake at once, not after handshakeTimeout.
+func TestClient_CancelAbortsDial(t *testing.T) {
+	addr, accepted := startSilentServer(t, make(chan struct{}))
+	c := NewClient(testTarget(t, addr, "SHA256:"+strings.Repeat("A", 43)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { _, err := c.Get(ctx); done <- err }()
+
+	waitFor(t, func() bool { return accepted.Load() == 1 })
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Get succeeded after cancel")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get still blocked after its ctx was cancelled")
+	}
+}
+
+// TestClient_QueuedCallsShareFailedDial is the regression test for requests
+// queued behind a failing dial each redialing in turn, stacking one full
+// timeout per request.
+func TestClient_QueuedCallsShareFailedDial(t *testing.T) {
+	release := make(chan struct{})
+	addr, accepted := startSilentServer(t, release)
+	c := NewClient(testTarget(t, addr, "SHA256:"+strings.Repeat("A", 43)))
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+
+	go func() { _, err := c.Get(context.Background()); first <- err }()
+
+	waitFor(t, func() bool { return accepted.Load() == 1 })
+
+	go func() { _, err := c.Get(context.Background()); second <- err }()
+
+	// Let the second call queue on the mutex before the first dial fails.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	for _, ch := range []chan error{first, second} {
+		select {
+		case err := <-ch:
+			if err == nil {
+				t.Fatal("Get succeeded against a server that closes the handshake")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Get did not return")
+		}
+	}
+
+	if got := accepted.Load(); got != 1 {
+		t.Fatalf("server accepted %d connections, want 1: the queued call redialed", got)
 	}
 }
 

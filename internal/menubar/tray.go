@@ -202,7 +202,8 @@ func (t *Tray) rebuildMenu() {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
 	}
 
-	// Tunnels: one glyph+name row each, click to start/stop that tunnel.
+	// Tunnels: one glyph+name row each, click to start/stop that tunnel,
+	// followed by a read-only row for its SSH connection while listening.
 	if len(snap.Tunnels) > 0 {
 		menu.AddSeparator()
 
@@ -227,6 +228,10 @@ func (t *Tray) rebuildMenu() {
 						return t.ctrl.StartTunnel(name)
 					})
 				})
+			}
+
+			if label, ok := connRow(ts); ok {
+				menu.Add("    " + label).SetEnabled(false)
 			}
 		}
 	}

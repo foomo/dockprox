@@ -229,6 +229,8 @@ func (c *ProxyController) Start() error {
 		return err
 	}
 
+	c.logger.SetLevel(config.LevelFromString(cfg.LogLevel))
+
 	reg, err := upstream.NewRegistry(cfg)
 	if err != nil {
 		c.fail(errors.Wrap(err, "registry"))
@@ -272,6 +274,15 @@ func (c *ProxyController) Start() error {
 		c.fail(errors.Wrap(err, "tunnels"))
 
 		return err
+	}
+
+	// Repaint on every SSH state change, not just when a tunnel starts or
+	// stops: the approval-pending state appears in the middle of a dial,
+	// including dials triggered by proxied requests.
+	for _, h := range tunnels {
+		if sd, ok := h.dialer.(*upstream.SSHDialer); ok {
+			sd.OnStateChange(c.notify)
+		}
 	}
 
 	done := make(chan struct{})

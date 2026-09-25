@@ -59,6 +59,7 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 
 	logger := log.NewWithOptions(io.MultiWriter(cmd.ErrOrStderr(), logFile), log.Options{ReportTimestamp: true})
 	logger.SetLevel(config.LevelFromString(cfg.LogLevel))
+	log.SetDefault(logger)
 
 	reg, err := upstream.NewRegistry(cfg)
 	if err != nil {

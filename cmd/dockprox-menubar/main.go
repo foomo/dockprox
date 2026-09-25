@@ -52,6 +52,7 @@ func run(cfgPath string) error {
 	}
 
 	logger := log.NewWithOptions(logWriter, log.Options{ReportTimestamp: true})
+	log.SetDefault(logger)
 
 	ctrl := menubar.New(cfgPath, logger)
 

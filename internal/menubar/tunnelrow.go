@@ -12,47 +12,52 @@ const (
 	tunnelActionStop
 )
 
-// tunnelRow decides how one tunnel is presented: the glyph, the address
-// column, and what a click does.
+// tunnelRow decides how one tunnel's listener row is presented: the glyph,
+// the address column, and what a click does.
 //
-//	○  stopped — no listener              (click starts it)
-//	◎  listening, never dialled           (click stops it)
-//	⊙  listening, dial in flight          (click stops it)
-//	⚠︎  listening, last dial failed        (click stops it)
-//	◉  listening and connected            (click stops it)
+//	○  stopped — no listener   (click starts it)
+//	◉  listening               (click stops it)
 //
 // Glyph and action are derived together, in one place, because they must
 // agree — a row that reads "stopped" must start the tunnel, and a row that
-// reads "up" must stop it. Deriving them separately is what previously let
-// a listening-but-unconnected tunnel render as ○ ("stopped") while its
-// click still called StopTunnel, so the first click appeared to do nothing
-// and the tunnel only came up on the second.
+// reads "up" must stop it. The SSH connection behind the listener is shown
+// on its own row, see connRow.
 func tunnelRow(ts TunnelStatus) (glyph, addr string, action tunnelAction) { //nolint:nonamedreturns // named for the doc comment's sake
 	if ts.State != TunnelListening {
 		return "○", "-", tunnelActionStart
 	}
 
-	// The listener is bound, so the row is "up" and a click stops it. The
-	// glyph then distinguishes how far the SSH connection behind it has
-	// got, which is what the user is actually waiting on.
-	glyph = "◎"
+	return "◉", ts.Addr, tunnelActionStop
+}
+
+// connRow returns the label of the informational row shown under a
+// listening tunnel, describing its SSH connection. ok is false when the
+// tunnel is stopped and the row is omitted.
+//
+//	◎  never dialled — the listener dials lazily
+//	⊙  dial in flight
+//	☎︎  the agent is waiting for the user to approve a sign request
+//	⚠︎  last dial failed
+//	◉  connected
+func connRow(ts TunnelStatus) (label string, ok bool) { //nolint:nonamedreturns // named for the doc comment's sake
+	if ts.State != TunnelListening {
+		return "", false
+	}
 
 	switch ts.ConnState {
 	case sshclient.ConnConnected:
-		glyph = "◉"
+		return "◉ ssh connected", true
 	case sshclient.ConnConnecting:
-		glyph = "⊙"
+		return "⊙ ssh connecting", true
+	case sshclient.ConnAwaitingApproval:
+		return "☎︎ ssh awaiting approval", true
 	case sshclient.ConnDisconnected:
-		// The last dial failed. Client.Close also sets this, but a closed
-		// client belongs to a tunnel that is no longer listening, so on a
-		// listening tunnel this always means a failed attempt — worth
-		// flagging, since the usual causes (a locked password manager, an
-		// unreachable bastion) need the user to do something.
-		glyph = "⚠︎"
+		// Client.Close also sets this, but a closed client belongs to a
+		// tunnel that is no longer listening, so here it always means a
+		// failed attempt.
+		return "⚠︎ ssh connection failed", true
 	case sshclient.ConnUnknown:
-		// Bound but never dialled: nothing has gone wrong, and a
-		// connection through the listener will dial lazily.
 	}
 
-	return glyph, ts.Addr, tunnelActionStop
+	return "◎ not connected", true
 }

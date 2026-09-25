@@ -73,3 +73,7 @@ func (d *SSHDialer) Close() error { return d.cli.Close() }
 // State returns the last known connection state of the underlying SSH
 // client. Passive — see sshclient.Client.State.
 func (d *SSHDialer) State() sshclient.ConnState { return d.cli.State() }
+
+// OnStateChange registers fn to run whenever State changes. See
+// sshclient.Client.OnStateChange for the calling constraints.
+func (d *SSHDialer) OnStateChange(fn func()) { d.cli.OnStateChange(fn) }
