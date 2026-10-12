@@ -1,4 +1,3 @@
-// Package cli wires the dockprox cobra command tree.
 package cli
 
 import (

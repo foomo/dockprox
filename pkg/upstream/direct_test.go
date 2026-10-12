@@ -2,6 +2,7 @@ package upstream_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -37,4 +38,10 @@ func TestDirectDialer_Dial(t *testing.T) {
 	if string(buf[:8]) != "HTTP/1.0" {
 		t.Fatalf("unexpected response: %q", buf)
 	}
+}
+
+func ExampleNewDirect() {
+	d := upstream.NewDirect("bypass")
+	fmt.Println(d.Name())
+	// Output: bypass
 }

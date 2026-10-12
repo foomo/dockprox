@@ -1,7 +1,5 @@
 //go:build darwin
 
-// Command dockprox-menubar runs the macOS menu bar (tray) app that drives a
-// dockprox proxy in-process.
 package main
 
 import (
