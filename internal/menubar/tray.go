@@ -54,6 +54,8 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 		logPath: logPath,
 	}
 
+	ctrl.OnApproval(newForeground(app, logger).set)
+
 	t.refreshAutostart()
 	t.applyIcon(ctrl.Snapshot().State)
 	t.rebuildMenu()

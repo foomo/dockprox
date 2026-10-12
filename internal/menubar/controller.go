@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -172,6 +173,8 @@ type ProxyController struct {
 	done      chan struct{}
 	lastErr   error
 	listeners []func(Status)
+	// onApproval is set once, before Start; see OnApproval.
+	onApproval func(pending bool)
 }
 
 // New returns a stopped controller bound to cfgPath.
@@ -207,6 +210,15 @@ func (c *ProxyController) Subscribe(fn func(Status)) func() {
 			c.listeners[idx] = nil
 		}
 	}
+}
+
+// OnApproval registers fn to be told when an SSH tunnel starts (true) and
+// stops (false) waiting on its agent to approve a key. fn runs synchronously
+// on the dialing goroutine before the sign request reaches the agent, so it
+// can act before the agent decides whether to show its prompt; it must not
+// call back into the controller. Call before Start.
+func (c *ProxyController) OnApproval(fn func(pending bool)) {
+	c.onApproval = fn
 }
 
 // Start loads config and runs the proxy in a goroutine. Returns nil if
@@ -281,7 +293,7 @@ func (c *ProxyController) Start() error {
 	// including dials triggered by proxied requests.
 	for _, h := range tunnels {
 		if sd, ok := h.dialer.(*upstream.SSHDialer); ok {
-			sd.OnStateChange(c.notify)
+			sd.OnStateChange(c.sshStateChanged(sd.State))
 		}
 	}
 
@@ -637,6 +649,22 @@ func (c *ProxyController) notify() {
 		if fn != nil {
 			fn(status)
 		}
+	}
+}
+
+// sshStateChanged returns an SSH dialer's state-change hook: it reports
+// entering and leaving ConnAwaitingApproval to onApproval, once per edge,
+// then repaints.
+func (c *ProxyController) sshStateChanged(state func() sshclient.ConnState) func() {
+	var pending atomic.Bool
+
+	return func() {
+		p := state() == sshclient.ConnAwaitingApproval
+		if pending.Swap(p) != p && c.onApproval != nil {
+			c.onApproval(p)
+		}
+
+		c.notify()
 	}
 }
 

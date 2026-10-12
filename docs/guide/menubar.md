@@ -104,9 +104,16 @@ retrying in turn, and stopping a tunnel aborts an attempt in flight.
 ### 1Password SSH agent
 
 1Password [suppresses its approval prompt](https://developer.1password.com/docs/ssh/agent/authorization/) when the
-requesting app is not in the foreground. dockprox is a menu bar app and never is, so the prompt does not pop up: the
-1Password menu bar icon shows an indicator dot instead. While the tunnel shows `☎︎`, open the 1Password menu and select
-**SSH request waiting** to approve it.
+requesting app is not in the foreground. A menu bar app never is on its own, so dockprox brings itself to the front
+just before it asks the agent to sign. The prompt then pops up. Afterwards, dockprox hides itself again, and focus
+returns to the app you were using. This happens on every new SSH connection, so you may see a short focus flicker even
+when 1Password already remembers the approval.
+
+This needs dockprox to run as `Dockprox.app`: macOS only grants the activation through Launch Services, which needs the
+app bundle.
+
+If macOS refuses the activation, 1Password shows an indicator dot on its menu bar icon instead of the prompt. While the
+tunnel shows `☎︎`, open the 1Password menu and select **SSH request waiting** to approve it.
 
 1Password remembers the approval for dockprox until it locks or quits, or for the time set under **Settings → Developer
 → Remember key approval**. Checking **Approve for all applications** in the prompt covers dockprox too.
