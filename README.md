@@ -6,7 +6,6 @@
 [![GitHub Stars](https://img.shields.io/github/stars/foomo/dockprox.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/foomo/dockprox/badge)](https://securityscorecards.dev/viewer/?uri=github.com/foomo/dockprox)
 
-
 <p align="center">
   <img alt="dockprox" src="docs/public/logo.png" width="400" height="400"/>
 </p>
