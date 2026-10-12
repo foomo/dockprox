@@ -115,10 +115,15 @@ type agentSigner struct {
 	att  *attempt
 }
 
+// Sign signs data with the key's default algorithm. See
+// [agentSigner.SignWithAlgorithm].
 func (s agentSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	return s.SignWithAlgorithm(rand, data, "")
 }
 
+// SignWithAlgorithm forwards the sign request to the agent. While the agent
+// holds it, the dial deadline is extended to the approval window and the
+// attempt reports that it is awaiting approval.
 func (s agentSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
 	fp := ssh.FingerprintSHA256(s.PublicKey())
 	start := time.Now()

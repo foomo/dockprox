@@ -1,6 +1,3 @@
-// Command dockprox-docs generates Markdown reference pages for the
-// dockprox CLI using cobra/doc. The output is consumed by the VitePress
-// site at docs/reference/cli/.
 package main
 
 import (

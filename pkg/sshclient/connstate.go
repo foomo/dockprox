@@ -11,9 +11,9 @@ const (
 	ConnUnknown      ConnState = iota // never attempted
 	ConnConnected                     // last Get succeeded (fresh dial or live keepalive)
 	ConnDisconnected                  // last Get attempt failed, or Close was called
-	// ConnConnecting means a dial is in flight right now. Appended rather
-	// than inserted so the existing values keep their numbers, and so
-	// ConnUnknown stays the zero value.
+	// ConnConnecting means a dial is in flight right now. Values are only
+	// ever appended, so ConnUnknown stays the zero value and the numbering
+	// of the others is stable.
 	ConnConnecting
 	// ConnAwaitingApproval means a dial is in flight and the agent is
 	// holding a sign request, waiting for the user to approve it.

@@ -56,6 +56,7 @@ func waitDone(dones []chan struct{}, timeout time.Duration) bool {
 // State is the proxy lifecycle state.
 type State int
 
+// Proxy lifecycle states. StateStopped is the zero value.
 const (
 	StateStopped State = iota
 	StateStarting
@@ -83,6 +84,7 @@ func (s State) String() string {
 // HTTP proxy and other tunnels.
 type TunnelState int
 
+// Tunnel listener states. TunnelListening is the zero value.
 const (
 	TunnelListening TunnelState = iota
 	TunnelStopped
