@@ -1,10 +1,9 @@
-[![CodeQL](https://github.com/foomo/dockprox/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/foomo/dockprox/actions/workflows/github-code-scanning/codeql)
-[![Coverage](https://img.shields.io/codecov/c/github/foomo/dockprox?style=flat-square&logo=github)](https://app.codecov.io/gh/foomo/dockprox)
 [![GoDoc](https://godoc.org/github.com/foomo/dockprox?status.svg)](https://godoc.org/github.com/foomo/dockprox)
+[![Coverage](https://img.shields.io/codecov/c/github/foomo/dockprox?style=flat-square&logo=github)](https://app.codecov.io/gh/foomo/dockprox)
 [![GitHub Downloads](https://img.shields.io/github/downloads/foomo/dockprox/total.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/foomo/dockprox.svg?style=flat-square&logo=docker)](https://hub.docker.com/r/foomo/dockprox)
-[![GitHub Stars](https://img.shields.io/github/stars/foomo/dockprox.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/foomo/dockprox/badge)](https://securityscorecards.dev/viewer/?uri=github.com/foomo/dockprox)
+[![GitHub Stars](https://img.shields.io/github/stars/foomo/dockprox.svg?style=flat-square&logo=github)](https://github.com/foomo/dockprox)
 
 <p align="center">
   <img alt="dockprox" src="docs/public/logo.png" width="400" height="400"/>
