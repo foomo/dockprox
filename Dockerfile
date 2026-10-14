@@ -1,7 +1,5 @@
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM debian:stable-slim@sha256:eb593cf2c358cacef45ca0a424bbc7d30cfa3466265fc2662b9466a0ca6ba1c5
 
-# Debian, not Alpine: Alpine does not package ocproxy, which openconnect
-# upstreams need.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openconnect ocproxy \
     && rm -rf /var/lib/apt/lists/*
