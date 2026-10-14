@@ -152,13 +152,13 @@ tidy:
 ## Show outdated direct dependencies
 outdated:
 	@echo "〉go mod outdated"
-	@GOWORK=off go-mod-upgrade --list
+	@GOWORK=off go-mod-upgrade --list  --cooldown 7d
 
 .PHONY: upgrade
 ## Upgrade direct dependencies
 upgrade:
 	@echo "〉go mod upgrade"
-	@GOWORK=off go-mod-upgrade
+	@GOWORK=off go-mod-upgrade --cooldown 7d
 	@$(MAKE) tidy
 
 ### Documentation
