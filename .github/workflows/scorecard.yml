@@ -41,7 +41,7 @@ jobs:
 
       - name: "Run analysis"
         # https://github.com/ossf/scorecard-action/releases
-        uses: ossf/scorecard-action@46dc3187a971a9febf3aeb7f94ccde489f7bb46a # v2.5.0
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
         with:
           results_file: results.sarif
           results_format: sarif
@@ -77,6 +77,6 @@ jobs:
       # Commenting out will disable upload of results to your repo's Code Scanning dashboard
       - name: "Upload to code-scanning"
         # https://github.com/github/codeql-action/releases
-        uses: github/codeql-action/upload-sarif@66e692051da0915b214c5158091a226015d453f4 # v3.38.3
+        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           sarif_file: results.sarif
