@@ -82,6 +82,52 @@ Point the browser's proxy at `127.0.0.1:1030` (e.g. a FoxyProxy pattern
 for `*.local.gd`) and `https://app.a.local.gd` reaches cluster A's
 ingress on port 10310 — no port in the URL, no `/etc/hosts` entries.
 
+## Listeners
+
+`listeners` opens local ports besides the HTTP proxy on `listen`. Each
+has a `type`:
+
+| `type`             | What it is                                                                  |
+|--------------------|-----------------------------------------------------------------------------|
+| `socks5` (default) | A SOCKS5 server, for tools that speak SOCKS5 rather than `HTTPS_PROXY`.    |
+| `tcp`              | A plain port forward to `target`, like `ssh -L`. Clients need no proxy support. |
+
+A listener either pins one upstream or routes by `rules`:
+
+```yaml
+listeners:
+  - listen: 127.0.0.1:1080   # pinned: every connection → jump, rules ignored
+    upstream: jump
+  - listen: 127.0.0.1:1090   # no upstream: routes by rules, unmatched → direct
+
+rules:                       # shared by the HTTP proxy and unpinned listeners
+  - match: "*.internal.example.com"
+    upstream: jump
+```
+
+An unpinned socks5 listener is the SOCKS5 twin of the HTTP proxy on
+`listen`. Any upstream type can be pinned — e.g. an openconnect VPN for a
+SOCKS5 port straight into it. In the menu bar app every listener is a row
+you can start and stop.
+
+### TCP forwards
+
+A `tcp` listener forwards every connection to one `target`, through the
+pinned upstream — or, without `upstream`, through whatever `rules` match
+the target's host:
+
+```yaml
+listeners:
+  - type: tcp
+    listen: 127.0.0.1:5432
+    target: db.internal.example.com:5432   # resolved on the far side
+    upstream: jump
+```
+
+```sh
+psql -h 127.0.0.1 -p 5432 ...   # no proxy settings needed
+```
+
 ## SSH tunnels
 
 A `type: ssh` upstream is an SSH connection dockprox owns. It connects
@@ -119,26 +165,19 @@ Two trust sources:
 A containerised dockprox almost certainly wants the pinned form: an image
 usually has no `~/.ssh` at all.
 
-### Exposing a SOCKS5 port
+### Reachability
 
-Set `socks5Listen` to give a tunnel its own local SOCKS5 listener, for
-tools that speak SOCKS5 directly rather than through `HTTPS_PROXY`:
+An ssh upstream must be used somehow: dockprox rejects one that no rule,
+[listener](#listeners) or `via` references.
+
+The former `socks5Listen` field on ssh upstreams is gone; a config that
+still sets it fails to load. Replace it with a pinned listener:
 
 ```yaml
-upstreams:
-  jump:
-    type: ssh
-    host: jumphost
-    keyFile: ~/.ssh/id_ed25519
-    hostKey: "SHA256:..."
-    socks5Listen: 127.0.0.1:1080
+listeners:
+  - listen: 127.0.0.1:1080
+    upstream: jump
 ```
-
-Every connection that listener accepts goes through that one bastion,
-regardless of host — the rules do not apply to it.
-
-An ssh upstream must be reachable somehow: dockprox rejects one that no
-rule references and that sets no `socks5Listen`.
 
 ### Reaching the bastion through a VPN
 
@@ -151,7 +190,6 @@ upstreams:
     type: ssh
     host: jumphost.internal
     identityAgent: SSH_AUTH_SOCK
-    socks5Listen: 127.0.0.1:1080
     via: vpn
 ```
 
@@ -161,8 +199,8 @@ can be slow.
 
 ### Not supported
 
-`ProxyJump` / ssh-through-ssh chains, local and remote port forwards (`-L` /
-`-R`), password authentication, and reading `~/.ssh/config` (`known_hosts`
+`ProxyJump` / ssh-through-ssh chains, remote port forwards (`-R`; for
+`-L` use a [tcp listener](#tcp-forwards)), password authentication, and reading `~/.ssh/config` (`known_hosts`
 is the one exception, and only as the host-key fallback).
 
 ## OpenConnect VPN
@@ -194,7 +232,8 @@ upstreams:
     serverCert: pin-sha256:...      # optional
 ```
 
-Use it as a rule target, or as the `via` of an ssh upstream. The VPN
+Use it as a rule target, a listener's `upstream`, or the `via` of an ssh
+upstream. The VPN
 starts on first use and waits up to 90s for the tunnel, so an MFA push
 approval fits. If openconnect exits, the next request starts it again —
 and asks for another approval. Stopping dockprox logs the VPN session out.

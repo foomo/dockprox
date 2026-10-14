@@ -19,125 +19,87 @@ func TestTunnelRow(t *testing.T) {
 		name      string
 		status    TunnelStatus
 		wantGlyph string
-		wantAddr  string
+		wantLabel string
 		wantAct   tunnelAction
 	}{
 		{
-			name:      "stopped",
-			status:    TunnelStatus{State: TunnelStopped, ConnState: sshclient.ConnUnknown},
+			name:      "pinned, stopped",
+			status:    TunnelStatus{Name: "127.0.0.1:1080", Upstream: "bastion", State: TunnelStopped},
 			wantGlyph: "○",
-			wantAddr:  "-",
+			wantLabel: "127.0.0.1:1080 → bastion",
 			wantAct:   tunnelActionStart,
 		},
 		{
-			// A listener bound by Start() that nothing has dialled through
-			// yet must not read as "stopped", because clicking it stops the
-			// tunnel.
-			name:      "listening, never dialled",
-			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnUnknown},
+			name:      "pinned, listening",
+			status:    TunnelStatus{Name: "127.0.0.1:1080", Upstream: "bastion", State: TunnelListening, Addr: "127.0.0.1:1080"},
 			wantGlyph: "◉",
-			wantAddr:  "127.0.0.1:1080",
+			wantLabel: "127.0.0.1:1080 → bastion",
 			wantAct:   tunnelActionStop,
 		},
 		{
-			name:      "listening, dial failed",
-			status:    TunnelStatus{State: TunnelListening, Addr: "127.0.0.1:1080", ConnState: sshclient.ConnDisconnected},
+			name:      "tcp, pinned",
+			status:    TunnelStatus{Name: "127.0.0.1:5432", Upstream: "bastion", Target: "db.internal:5432", State: TunnelListening},
 			wantGlyph: "◉",
-			wantAddr:  "127.0.0.1:1080",
+			wantLabel: "127.0.0.1:5432 → db.internal:5432 via bastion",
+			wantAct:   tunnelActionStop,
+		},
+		{
+			name:      "tcp, routed by rules",
+			status:    TunnelStatus{Name: "127.0.0.1:5432", Target: "db.internal:5432", State: TunnelStopped},
+			wantGlyph: "○",
+			wantLabel: "127.0.0.1:5432 → db.internal:5432",
+			wantAct:   tunnelActionStart,
+		},
+		{
+			name:      "routed by rules",
+			status:    TunnelStatus{Name: "127.0.0.1:1090", State: TunnelListening, Addr: "127.0.0.1:1090"},
+			wantGlyph: "◉",
+			wantLabel: "127.0.0.1:1090",
 			wantAct:   tunnelActionStop,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			glyph, addr, act := tunnelRow(tc.status)
-
-			if glyph != tc.wantGlyph {
-				t.Errorf("glyph = %q, want %q", glyph, tc.wantGlyph)
-			}
-
-			if addr != tc.wantAddr {
-				t.Errorf("addr = %q, want %q", addr, tc.wantAddr)
-			}
-
-			if act != tc.wantAct {
-				t.Errorf("action = %v, want %v", act, tc.wantAct)
+			glyph, label, act := tunnelRow(tc.status)
+			if glyph != tc.wantGlyph || label != tc.wantLabel || act != tc.wantAct {
+				t.Fatalf("tunnelRow = %q, %q, %v; want %q, %q, %v",
+					glyph, label, act, tc.wantGlyph, tc.wantLabel, tc.wantAct)
 			}
 		})
 	}
 }
 
-// TestTunnelRow_GlyphAgreesWithAction pins the invariant: ○ means "click to
-// start" and every other glyph means "click to stop". A row that reads
-// stopped while its click stops the tunnel makes the first click look like
-// it did nothing.
-func TestTunnelRow_GlyphAgreesWithAction(t *testing.T) {
-	for _, tunnelState := range []TunnelState{TunnelListening, TunnelStopped} {
-		for _, connState := range allConnStates {
-			glyph, _, act := tunnelRow(TunnelStatus{State: tunnelState, ConnState: connState})
-
-			if (glyph == "○") != (act == tunnelActionStart) {
-				t.Errorf("State=%v ConnState=%v: glyph %q disagrees with action %v",
-					tunnelState, connState, glyph, act)
-			}
-		}
-	}
-}
-
-func TestConnRow(t *testing.T) {
+func TestUpstreamRow(t *testing.T) {
 	for _, tc := range []struct {
-		conn sshclient.ConnState
-		want string
-	}{
-		{sshclient.ConnUnknown, "◎ ssh not connected"},
-		{sshclient.ConnConnecting, "⊙ ssh connecting"},
-		{sshclient.ConnAwaitingApproval, "☎︎ ssh awaiting approval"},
-		{sshclient.ConnDisconnected, "⚠︎ ssh connection failed"},
-		{sshclient.ConnConnected, "◉ ssh connected"},
-	} {
-		got, ok := connRow(TunnelStatus{State: TunnelListening, ConnState: tc.conn})
-		if !ok || got != tc.want {
-			t.Errorf("ConnState=%v: connRow = %q, %v; want %q, true", tc.conn, got, ok, tc.want)
-		}
-	}
-}
-
-// TestConnRow_HiddenWhenStopped: a stopped tunnel has no connection to show,
-// whatever state its client last reported.
-func TestConnRow_HiddenWhenStopped(t *testing.T) {
-	for _, connState := range allConnStates {
-		if label, ok := connRow(TunnelStatus{State: TunnelStopped, ConnState: connState}); ok {
-			t.Errorf("ConnState=%v: stopped tunnel shows conn row %q", connState, label)
-		}
-	}
-}
-
-func TestVPNRow(t *testing.T) {
-	for _, tc := range []struct {
-		state       sshclient.ConnState
+		status      UpstreamStatus
 		wantGlyph   string
+		wantLabel   string
 		wantConnect bool
 	}{
-		{sshclient.ConnUnknown, "○", true},
-		{sshclient.ConnConnecting, "⊙", false},
-		{sshclient.ConnConnected, "◉", false},
-		{sshclient.ConnDisconnected, "⚠︎", true},
+		{UpstreamStatus{Name: "bastion", Type: "ssh"}, "○", "bastion (ssh): disconnected", true},
+		{UpstreamStatus{Name: "bastion", Type: "ssh", ConnState: sshclient.ConnConnecting}, "⊙", "bastion (ssh): connecting", false},
+		{UpstreamStatus{Name: "bastion", Type: "ssh", ConnState: sshclient.ConnAwaitingApproval}, "☎︎", "bastion (ssh): awaiting approval", false},
+		{UpstreamStatus{Name: "bastion", Type: "ssh", ConnState: sshclient.ConnDisconnected}, "⚠︎", "bastion (ssh): failed", true},
+		{UpstreamStatus{Name: "vpn", Type: "openconnect", ConnState: sshclient.ConnConnected}, "◉", "vpn (openconnect): connected", false},
+		{UpstreamStatus{Name: "vpn", Type: "openconnect", ConnState: sshclient.ConnConnecting}, "⊙", "vpn (openconnect): connecting (approve on your device)", false},
 	} {
-		t.Run(tc.state.String(), func(t *testing.T) {
-			glyph, _, connect := vpnRow(VPNStatus{ConnState: tc.state})
-			if glyph != tc.wantGlyph || connect != tc.wantConnect {
-				t.Fatalf("vpnRow = %q, connect=%v; want %q, %v", glyph, connect, tc.wantGlyph, tc.wantConnect)
+		t.Run(tc.wantLabel, func(t *testing.T) {
+			glyph, label, connect := upstreamRow(tc.status)
+			if glyph != tc.wantGlyph || label != tc.wantLabel || connect != tc.wantConnect {
+				t.Fatalf("upstreamRow = %q, %q, %v; want %q, %q, %v",
+					glyph, label, connect, tc.wantGlyph, tc.wantLabel, tc.wantConnect)
 			}
 		})
 	}
 }
 
-// TestVPNRow_GlyphAgreesWithAction pins that only an up or connecting row
-// disconnects on click, for every state.
-func TestVPNRow_GlyphAgreesWithAction(t *testing.T) {
+// TestUpstreamRow_GlyphAgreesWithAction pins that only a row reading down
+// (○, ⚠︎) connects on click, for every state.
+func TestUpstreamRow_GlyphAgreesWithAction(t *testing.T) {
 	for _, s := range allConnStates {
-		glyph, _, connect := vpnRow(VPNStatus{ConnState: s})
+		glyph, _, connect := upstreamRow(UpstreamStatus{Name: "x", Type: "ssh", ConnState: s})
 
-		up := glyph == "◉" || glyph == "⊙"
-		if up == connect {
+		down := glyph == "○" || glyph == "⚠︎"
+		if down != connect {
 			t.Fatalf("state %s: glyph %q but connect=%v", s, glyph, connect)
 		}
 	}

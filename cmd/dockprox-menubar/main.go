@@ -54,6 +54,13 @@ func run(cfgPath string) error {
 
 	ctrl := menubar.New(cfgPath, logger)
 
+	settings, err := menubar.LoadSettings(menubar.SettingsPath())
+	if err != nil {
+		logger.Warn("settings", "err", err)
+	}
+
+	ctrl.SetAutoconnect(settings.AutoconnectOn())
+
 	app := application.New(application.Options{
 		Name: "Dockprox",
 		Mac: application.MacOptions{

@@ -68,7 +68,6 @@ upstreams:
     #   ssh-keyscan -t ed25519 bastion.example.com 2>/dev/null \
     #     | ssh-keygen -lf - | awk '{print $2}'
     hostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    socks5Listen: 127.0.0.1:1080  # optional: expose a local SOCKS5 port
     via: vpn                      # optional: dial the bastion through another (non-ssh) upstream
 
   # OpenConnect VPN, run rootless: dockprox spawns
@@ -84,6 +83,24 @@ upstreams:
       username: user
       password: pass
     serverCert: pin-sha256:AAAA...  # optional: pin the gateway certificate (--servercert)
+
+# Local ports besides the HTTP proxy: SOCKS5 servers, for tools that speak
+# SOCKS5 rather than HTTPS_PROXY, and plain TCP forwards. Optional.
+listeners:
+  # Pinned: every connection goes through this upstream; rules are ignored.
+  - listen: 127.0.0.1:1080
+    upstream: bastion
+  # No upstream: routes by the rules below, like the HTTP proxy;
+  # unmatched hosts dial direct.
+  - listen: 127.0.0.1:1090
+    type: socks5                  # socks5 (default) | tcp
+  # tcp: a plain port forward like `ssh -L` — every connection goes to
+  # target, through upstream (or routed by rules on target's host when
+  # upstream is omitted). Clients need no proxy support.
+  - type: tcp
+    listen: 127.0.0.1:5432
+    target: db.internal.example.com:5432
+    upstream: bastion
 
 # Host-matching rules, evaluated in order. match is either an exact
 # hostname or a leading "*." wildcard suffix. upstream must name an entry

@@ -7,7 +7,21 @@ type Config struct {
 	LogFile   string              `json:"logFile,omitempty" yaml:"logFile,omitempty" jsonschema:"description=log file path (default: OS cache dir)"`
 	Upstreams map[string]Upstream `json:"upstreams"         yaml:"upstreams"`
 	Rules     []Rule              `json:"rules"             yaml:"rules"`
+	Listeners []Listener          `json:"listeners,omitempty" yaml:"listeners,omitempty"`
 	Chrome    *Chrome             `json:"chrome,omitempty"  yaml:"chrome,omitempty"`
+}
+
+// Listener is a local port. A socks5 listener (the default) is a SOCKS5
+// server; a tcp listener forwards every connection to Target, like
+// `ssh -L`. With Upstream set it is pinned: every connection goes through
+// that upstream and rules are ignored. Without, the requested host (socks5)
+// or Target's host (tcp) is routed by rules, and unmatched hosts dial
+// direct.
+type Listener struct {
+	Type     string `json:"type,omitempty"     yaml:"type,omitempty"     jsonschema:"enum=socks5,enum=tcp,default=socks5"`
+	Listen   string `json:"listen"             yaml:"listen"             jsonschema:"description=local listen address (host:port)"`
+	Upstream string `json:"upstream,omitempty" yaml:"upstream,omitempty" jsonschema:"description=pin every connection to this upstream; omit to route by rules"`
+	Target   string `json:"target,omitempty"   yaml:"target,omitempty"   jsonschema:"description=tcp: host:port every connection is forwarded to"`
 }
 
 // Chrome configures the isolated Chrome instance the menu bar app can
@@ -34,7 +48,6 @@ type Upstream struct {
 	KeyFilePassphrase string `json:"keyFilePassphrase,omitempty" yaml:"keyFilePassphrase,omitempty" jsonschema:"description=ssh: passphrase for an encrypted keyFile"`
 	IdentityAgent     string `json:"identityAgent,omitempty"     yaml:"identityAgent,omitempty"     jsonschema:"description=ssh: SSH_AUTH_SOCK or an agent socket path"`
 	HostKey           string `json:"hostKey,omitempty"           yaml:"hostKey,omitempty"           jsonschema:"description=ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"`
-	Socks5Listen      string `json:"socks5Listen,omitempty"      yaml:"socks5Listen,omitempty"      jsonschema:"description=ssh: local SOCKS5 listen address (host:port)"`
 	Via               string `json:"via,omitempty"               yaml:"via,omitempty"               jsonschema:"description=ssh: name of a non-ssh upstream to dial the bastion through"`
 
 	// OpenConnect VPN fields; valid only when Type is "openconnect". Login

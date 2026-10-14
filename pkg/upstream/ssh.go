@@ -70,16 +70,43 @@ func (d *SSHDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error)
 // attempt settles, so a caller that notifies its observers immediately
 // afterwards will publish the in-flight state rather than the stale one.
 func (d *SSHDialer) Connect(ctx context.Context) error {
-	d.cli.MarkConnecting()
-
+	// The via upstream shows its own progress; marking this connection as
+	// connecting before it is up would leave it stuck there if via fails.
 	if err := d.connectVia(ctx); err != nil {
 		return err
 	}
+
+	d.cli.MarkConnecting()
 
 	_, err := d.cli.Get(ctx)
 
 	return err
 }
+
+// Up connects, undoing a Down, whether or not autoconnect is on. The user
+// asked for this connection, so a via upstream that can be brought up
+// explicitly (a VPN) is brought up too.
+func (d *SSHDialer) Up(ctx context.Context) error {
+	if u, ok := d.via.(interface {
+		Up(ctx context.Context) error
+	}); ok {
+		if err := u.Up(ctx); err != nil {
+			return errors.Wrapf(err, "via %s", d.via.Name())
+		}
+	} else if err := d.connectVia(ctx); err != nil {
+		return err
+	}
+
+	return d.cli.Up(ctx)
+}
+
+// SetAutoconnect sets whether Dial and Connect open the SSH connection on
+// demand (the default). With it off, they only reuse a live one.
+func (d *SSHDialer) SetAutoconnect(on bool) { d.cli.SetAutoconnect(on) }
+
+// Down closes the SSH connection and keeps it closed until Up: Dial and
+// Connect fail with sshclient.ErrDisconnected meanwhile.
+func (d *SSHDialer) Down() { d.cli.Down() }
 
 // Close tears down the SSH connection.
 func (d *SSHDialer) Close() error { return d.cli.Close() }

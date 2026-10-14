@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -449,5 +450,80 @@ func TestClient_State_DisconnectedAfterClose(t *testing.T) {
 
 	if got := c.State(); got != ConnDisconnected {
 		t.Fatalf("State()=%v, want ConnDisconnected", got)
+	}
+}
+
+func TestClient_DownHoldsUntilUp(t *testing.T) {
+	addr, hostFP := startHandshakeOnlyServer(t)
+	c := NewClient(testTarget(t, addr, hostFP))
+
+	if _, err := c.Get(t.Context()); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	c.Down()
+
+	if got := c.State(); got != ConnUnknown {
+		t.Fatalf("State()=%v after Down, want ConnUnknown", got)
+	}
+
+	if _, err := c.Get(t.Context()); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Get after Down: err=%v, want ErrDisconnected", err)
+	}
+
+	if err := c.Up(t.Context()); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if got := c.State(); got != ConnConnected {
+		t.Fatalf("State()=%v after Up, want ConnConnected", got)
+	}
+}
+
+func TestClient_DownAbortsDial(t *testing.T) {
+	addr, accepted := startSilentServer(t, make(chan struct{}))
+	c := NewClient(testTarget(t, addr, "SHA256:"+strings.Repeat("A", 43)))
+
+	done := make(chan error, 1)
+
+	go func() { done <- c.Up(context.Background()) }()
+
+	waitFor(t, func() bool { return accepted.Load() == 1 })
+	c.Down()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Up succeeded after Down")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Up still blocked after Down")
+	}
+
+	if got := c.State(); got != ConnUnknown {
+		t.Fatalf("State()=%v after Down, want ConnUnknown", got)
+	}
+}
+
+func TestClient_AutoconnectOff(t *testing.T) {
+	addr, hostFP := startHandshakeOnlyServer(t)
+	c := NewClient(testTarget(t, addr, hostFP))
+	c.SetAutoconnect(false)
+
+	if _, err := c.Get(t.Context()); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Get with autoconnect off: err=%v, want ErrDisconnected", err)
+	}
+
+	if got := c.State(); got != ConnUnknown {
+		t.Fatalf("State()=%v, want ConnUnknown: no dial may happen", got)
+	}
+
+	if err := c.Up(t.Context()); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	// The connection Up opened is reused on demand.
+	if _, err := c.Get(t.Context()); err != nil {
+		t.Fatalf("Get reusing live connection: %v", err)
 	}
 }

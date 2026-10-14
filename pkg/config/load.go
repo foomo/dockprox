@@ -2,7 +2,9 @@ package config
 
 import (
 	"io"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -61,6 +63,15 @@ func finalize(k *koanf.Koanf) (*Config, error) {
 	c := Defaults()
 	if err := k.UnmarshalWithConf("", c, koanf.UnmarshalConf{Tag: "yaml"}); err != nil {
 		return nil, errors.Wrap(err, "unmarshal")
+	}
+
+	// Unknown keys are ignored on unmarshal, so a config written for the
+	// removed socks5Listen would silently lose its SOCKS5 port.
+	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
+		if k.Exists("upstreams." + name + ".socks5Listen") {
+			return nil, errors.Errorf(
+				"upstreams.%s.socks5Listen: removed, add `listeners: [{listen: ..., upstream: %s}]` instead", name, name)
+		}
 	}
 
 	if err := c.Validate(); err != nil {

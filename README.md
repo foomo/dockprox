@@ -142,12 +142,14 @@ Top-level keys (`dockprox.schema.json`):
 | `logFile`   | Log file path. Empty uses the OS cache dir (`~/Library/Caches/org.foomo.dockprox`). |
 | `upstreams` | Map of named upstream proxies.                                           |
 | `rules`     | Ordered list of `match` → `upstream` mappings.                           |
+| `listeners` | Local SOCKS5 servers and TCP port forwards: pinned to one `upstream`, or routed by `rules`. |
 
 Upstream `type` values:
 
 - `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
 - `http` — HTTP CONNECT proxy, `url: http(s)://...`.
-- `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `socks5Listen`.
+- `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `via` to dial the bastion through another upstream.
+- `openconnect` — rootless VPN (F5, AnyConnect, …) via openconnect + ocproxy: `server`, `auth`, optional `protocol`, `serverCert`.
 - `direct` — explicit passthrough.
 
 Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).
@@ -162,7 +164,7 @@ Full reference: [docs/guide/configuration.md](docs/guide/configuration.md) · JS
 
 ## macOS menu bar app
 
-A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macOS only, Wails-backed). It runs a dockprox proxy in-process and exposes Start / Stop / Restart / Reveal-config-in-Finder / Quit from the system tray.
+A native menu bar (tray) app ships as a separate `dockprox-menubar` binary (macOS only, Wails-backed). It runs a dockprox proxy in-process and shows its listeners and upstreams in the system tray: click a listener to start/stop it, an ssh or openconnect upstream to connect/disconnect it. Proxy lifecycle, Chrome Sandbox, Autoconnect and Start at Login live under **Settings**.
 
 ```shell
 brew install --cask foomo/tap/dockprox-menubar

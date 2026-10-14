@@ -1,6 +1,9 @@
 package menubar
 
-import "github.com/foomo/dockprox/pkg/sshclient"
+import (
+	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/sshclient"
+)
 
 // tunnelAction is what clicking a tunnel's menu row does.
 type tunnelAction int
@@ -12,74 +15,69 @@ const (
 	tunnelActionStop
 )
 
-// tunnelRow decides how one tunnel's listener row is presented: the glyph,
-// the address column, and what a click does.
+// tunnelRow decides how one listener's row is presented: the glyph, the
+// label, and what a click does. Labels:
+//
+//	<listen> → <upstream>                  socks5, pinned
+//	<listen>                               socks5, routed by rules
+//	<listen> → <target> via <upstream>     tcp, pinned
+//	<listen> → <target>                    tcp, routed by rules
 //
 //	○  stopped — no listener   (click starts it)
 //	◉  listening               (click stops it)
 //
 // Glyph and action are derived together, in one place, because they must
 // agree — a row that reads "stopped" must start the tunnel, and a row that
-// reads "up" must stop it. The SSH connection behind the listener is shown
-// on its own row, see connRow.
-func tunnelRow(ts TunnelStatus) (glyph, addr string, action tunnelAction) { //nolint:nonamedreturns // named for the doc comment's sake
-	if ts.State != TunnelListening {
-		return "○", "-", tunnelActionStart
+// reads "up" must stop it. The connection of a pinned upstream is shown on
+// that upstream's own row, see upstreamRow.
+func tunnelRow(ts TunnelStatus) (glyph, label string, action tunnelAction) { //nolint:nonamedreturns // named for the doc comment's sake
+	label = ts.Name
+
+	switch {
+	case ts.Target != "" && ts.Upstream != "":
+		label += " → " + ts.Target + " via " + ts.Upstream
+	case ts.Target != "":
+		label += " → " + ts.Target
+	case ts.Upstream != "":
+		label += " → " + ts.Upstream
 	}
 
-	return "◉", ts.Addr, tunnelActionStop
+	if ts.State != TunnelListening {
+		return "○", label, tunnelActionStart
+	}
+
+	return "◉", label, tunnelActionStop
 }
 
-// connRow returns the label of the informational row shown under a
-// listening tunnel, describing its SSH connection. ok is false when the
-// tunnel is stopped and the row is omitted.
-//
-//	◎  never dialled — the listener dials lazily
-//	⊙  dial in flight
-//	☎︎  the agent is waiting for the user to approve a sign request
-//	⚠︎  last dial failed
-//	◉  connected
-func connRow(ts TunnelStatus) (label string, ok bool) { //nolint:nonamedreturns // named for the doc comment's sake
-	if ts.State != TunnelListening {
-		return "", false
-	}
-
-	switch ts.ConnState {
-	case sshclient.ConnConnected:
-		return "◉ ssh connected", true
-	case sshclient.ConnConnecting:
-		return "⊙ ssh connecting", true
-	case sshclient.ConnAwaitingApproval:
-		return "☎︎ ssh awaiting approval", true
-	case sshclient.ConnDisconnected:
-		// Client.Close also sets this, but a closed client belongs to a
-		// tunnel that is no longer listening, so here it always means a
-		// failed attempt.
-		return "⚠︎ ssh connection failed", true
-	case sshclient.ConnUnknown:
-	}
-
-	return "◎ ssh not connected", true
-}
-
-// vpnRow decides how one VPN's menu row is presented and what a click
-// does: connect when it is down, disconnect when it is up or connecting
-// (which aborts the attempt, e.g. an MFA push nobody will approve).
+// upstreamRow decides how one ssh or openconnect upstream's row is
+// presented ("<name> (<type>): <state>") and what a click does: connect
+// when it is down, disconnect when it is up or connecting (which aborts the
+// attempt, e.g. an MFA push nobody will approve).
 //
 //	○  disconnected            (click connects)
-//	⊙  connecting, waiting for MFA approval  (click aborts)
-//	⚠︎  last attempt failed or the VPN dropped  (click connects)
+//	⊙  connecting              (click aborts)
+//	☎︎  waiting on an approval  (click aborts)
+//	⚠︎  last attempt failed or the connection dropped  (click connects)
 //	◉  connected               (click disconnects)
-func vpnRow(vs VPNStatus) (glyph, label string, connect bool) { //nolint:nonamedreturns // named for the doc comment's sake
-	switch vs.ConnState {
+func upstreamRow(us UpstreamStatus) (glyph, label string, connect bool) { //nolint:nonamedreturns // named for the doc comment's sake
+	prefix := us.Name + " (" + us.Type + "): "
+
+	switch us.ConnState {
 	case sshclient.ConnConnected:
-		return "◉", "connected", false
-	case sshclient.ConnConnecting, sshclient.ConnAwaitingApproval:
-		return "⊙", "connecting (approve on your device)", false
+		return "◉", prefix + "connected", false
+	case sshclient.ConnConnecting:
+		if us.Type == config.UpstreamOpenConnect {
+			// The VPN login waits on the user's MFA device.
+			return "⊙", prefix + "connecting (approve on your device)", false
+		}
+
+		return "⊙", prefix + "connecting", false
+	case sshclient.ConnAwaitingApproval:
+		return "☎︎", prefix + "awaiting approval", false
 	case sshclient.ConnDisconnected:
-		return "⚠︎", "disconnected (failed)", true
+		return "⚠︎", prefix + "failed", true
 	case sshclient.ConnUnknown:
 	}
 
-	return "○", "disconnected", true
+	return "○", prefix + "disconnected", true
 }

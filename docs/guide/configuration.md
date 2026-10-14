@@ -29,7 +29,6 @@ upstreams:
     keyFilePassphrase: ""       # optional, for an encrypted keyFile
     identityAgent: SSH_AUTH_SOCK # agent auth: this sentinel, or a socket path
     hostKey: "SHA256:..."       # pinned fingerprint; falls back to ~/.ssh/known_hosts
-    socks5Listen: 127.0.0.1:1080 # optional: expose a local SOCKS5 port
     via: vpn                    # optional: dial the bastion through another upstream
 
   vpn:
@@ -44,6 +43,15 @@ upstreams:
   cluster-a:
     type: forward
     addr: 127.0.0.1:10310       # required; every matched host dials this
+
+listeners:                    # local ports besides the HTTP proxy
+  - listen: 127.0.0.1:1080    # type: socks5 (default)
+    upstream: bastion         # pinned; omit to route by rules
+  - listen: 127.0.0.1:1090
+  - type: tcp                 # port forward, like ssh -L
+    listen: 127.0.0.1:5432
+    target: db.internal:5432
+    upstream: bastion
 
 rules:
   - match: "*.azurecr.io"     # exact host or *.suffix wildcard
@@ -66,5 +74,6 @@ rules:
 
 ## See also
 
+- [Listeners](./usage.md#listeners)
 - [SSH tunnels](./usage.md#ssh-tunnels)
 - [OpenConnect VPN](./usage.md#openconnect-vpn)

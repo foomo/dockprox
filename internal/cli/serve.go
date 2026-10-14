@@ -3,17 +3,15 @@ package cli
 import (
 	"context"
 	"io"
-	"maps"
 	"net"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/listener"
 	"github.com/foomo/dockprox/pkg/match"
 	"github.com/foomo/dockprox/pkg/proxy"
-	"github.com/foomo/dockprox/pkg/socks5server"
 	"github.com/foomo/dockprox/pkg/upstream"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -92,7 +90,7 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 		return err
 	}
 
-	tunnels, err := tunnelListeners(cmd.Context(), cfg, reg, logger)
+	tunnels, err := tunnelListeners(cmd.Context(), cfg, reg, m, logger)
 	if err != nil {
 		return err
 	}
@@ -105,7 +103,7 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 	g.Go(func() error { return srv.Serve(ctx) })
 
 	for _, t := range tunnels {
-		logger.Info("serve", "socks5Listen", t.Addr())
+		logger.Info("serve", "listener", t.Addr())
 
 		g.Go(func() error { return t.Serve(ctx) })
 	}
@@ -113,40 +111,26 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 	return g.Wait()
 }
 
-// tunnelListeners builds one SOCKS5 listener per ssh upstream that
-// declares a socks5Listen. Each is bound to that tunnel's dialer, so every
-// connection it accepts goes through that one bastion. Names are sorted so
-// startup order and log output are deterministic.
+// tunnelListeners binds every configured listener (SOCKS5 or TCP forward).
+// A pinned listener is bound to its upstream's dialer; an unpinned one
+// routes by m like the HTTP proxy.
 func tunnelListeners(
 	ctx context.Context,
 	cfg *config.Config,
 	reg *upstream.Registry,
+	m *match.Matcher,
 	logger *log.Logger,
-) ([]*socks5server.Server, error) {
-	var servers []*socks5server.Server
+) ([]listener.Server, error) {
+	var servers []listener.Server
 
-	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
-		u := cfg.Upstreams[name]
-		if u.Type != config.UpstreamSSH || u.Socks5Listen == "" {
-			continue
-		}
-
-		d, ok := reg.Get(name)
-		if !ok {
-			return nil, errors.Errorf("upstream %q: not in registry", name)
-		}
-
-		srv, err := socks5server.NewServer(ctx, socks5server.Options{
-			Listen: u.Socks5Listen,
-			Dialer: d,
-			Logger: logger,
-		})
+	for _, l := range cfg.Listeners {
+		srv, err := listener.New(ctx, l, reg, m, logger)
 		if err != nil {
 			for _, s := range servers {
 				_ = s.Close()
 			}
 
-			return nil, errors.Wrapf(err, "tunnel %q", name)
+			return nil, errors.Wrapf(err, "listener %q", l.Listen)
 		}
 
 		servers = append(servers, srv)
@@ -241,7 +225,7 @@ func parseUpstreamFlag(s string) (string, config.Upstream, error) {
 
 // parseSSHUpstream parses "host" or "host:port" into an ssh upstream.
 // Tunnels declared this way are rule targets only; they get no
-// socks5Listen.
+// listener.
 func parseSSHUpstream(raw string) (config.Upstream, error) {
 	if raw == "" {
 		return config.Upstream{}, errors.New("host required")

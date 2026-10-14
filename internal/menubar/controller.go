@@ -10,10 +10,9 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/listener"
 	"github.com/foomo/dockprox/pkg/match"
-	"github.com/foomo/dockprox/pkg/openconnect"
 	"github.com/foomo/dockprox/pkg/proxy"
-	"github.com/foomo/dockprox/pkg/socks5server"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/foomo/dockprox/pkg/upstream"
 	"github.com/pkg/errors"
@@ -111,7 +110,7 @@ type Status struct {
 	LastError  error
 	Tunnels    []TunnelStatus
 	Forwards   []ForwardStatus
-	VPNs       []VPNStatus
+	Upstreams  []UpstreamStatus
 	// Chrome is the loaded config's chrome section, or nil when the
 	// controller is not running or the section is absent.
 	Chrome *config.Chrome
@@ -127,43 +126,53 @@ type ForwardStatus struct {
 	Addr string
 }
 
-// VPNStatus describes one openconnect upstream's VPN connection.
-type VPNStatus struct {
+// UpstreamStatus describes one upstream that holds a connection the user
+// can open and close from the menu: an ssh session or an openconnect VPN.
+type UpstreamStatus struct {
 	Name string
-	// ConnState is the VPN process state. ConnUnknown means not connected:
-	// never started, or disconnected from the menu.
+	// Type is the config type, config.UpstreamSSH or
+	// config.UpstreamOpenConnect.
+	Type string
+	// ConnState is the connection state. ConnUnknown means not connected:
+	// never dialled, or disconnected from the menu.
 	ConnState sshclient.ConnState
 }
 
-// TunnelStatus describes one ssh tunnel's SOCKS5 listener and SSH
-// connection state.
+// TunnelStatus describes one SOCKS5 listener. The connection of the
+// upstream it may be pinned to is reported in Status.Upstreams.
 type TunnelStatus struct {
+	// Name is the configured listen address, which keys the tunnel.
 	Name string
+	// Upstream is the pinned upstream, or "" when the listener routes by
+	// rules.
+	Upstream string
+	// Target is a tcp listener's forward target, "" for socks5.
+	Target string
 	// Addr is the listener's bound address, or "" when State is
 	// TunnelStopped.
 	Addr string
 	// State reflects whether this tunnel's SOCKS5 listener is currently
 	// accepting connections.
 	State TunnelState
-	// ConnState is the state of the underlying SSH connection: ConnUnknown
-	// means no dial has been attempted yet (the lazy-connect idle state),
-	// distinct from ConnDisconnected (a dial was attempted and failed, or
-	// the client was closed) and from ConnConnecting (a dial is in flight
-	// right now). Every value but ConnConnecting is a passive signal — see
-	// sshclient.Client.State. Always ConnUnknown when State is
-	// TunnelStopped.
-	ConnState sshclient.ConnState
 }
 
 // tunnelHandle is the controller's live bookkeeping for one tunnel,
 // independent of the HTTP proxy and other tunnels. srv/ctx/cancel/done are
 // nil when the tunnel is stopped.
 type tunnelHandle struct {
-	name   string
-	dialer upstream.Dialer
-	listen string
+	// name is the configured listen address, which keys the tunnel.
+	name string
+	// upstream and dialer are the pinned upstream, or "" and nil for a
+	// listener that routes by rules.
+	upstream string
+	dialer   upstream.Dialer
+	// listener, reg, matcher and logger rebind the listener on StartTunnel.
+	listener config.Listener
+	reg      *upstream.Registry
+	matcher  *match.Matcher
+	logger   *log.Logger
 
-	srv    *socks5server.Server
+	srv    listener.Server
 	ctx    context.Context //nolint:containedctx // supervisor handle: paired with cancel for later teardown, never threaded through calls
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -187,6 +196,9 @@ type ProxyController struct {
 	listeners []func(Status)
 	// onApproval is set once, before Start; see OnApproval.
 	onApproval func(pending bool)
+	// manualOnly is the inverse of the autoconnect setting, so the zero
+	// value keeps connecting on demand; see SetAutoconnect.
+	manualOnly atomic.Bool
 }
 
 // New returns a stopped controller bound to cfgPath.
@@ -292,7 +304,7 @@ func (c *ProxyController) Start() error {
 		return err
 	}
 
-	tunnels, err := buildTunnels(baseCtx, cfg, reg, c.logger)
+	tunnels, err := buildTunnels(baseCtx, cfg, reg, m, c.logger)
 	if err != nil {
 		cancel()
 		c.fail(errors.Wrap(err, "tunnels"))
@@ -300,22 +312,15 @@ func (c *ProxyController) Start() error {
 		return err
 	}
 
-	// Repaint on every SSH state change, not just when a tunnel starts or
-	// stops: the approval-pending state appears in the middle of a dial,
-	// including dials triggered by proxied requests.
-	for _, h := range tunnels {
-		if sd, ok := h.dialer.(*upstream.SSHDialer); ok {
-			sd.OnStateChange(c.sshStateChanged(sd.State))
-		}
-	}
-
-	// VPNs also start lazily from proxied requests, so repaint on every
-	// state change, not only on menu clicks.
-	for _, name := range vpnNames(cfg) {
-		if d, ok := reg.Get(name); ok {
-			if od, ok := d.(*upstream.OpenConnectDialer); ok {
-				od.OnStateChange(c.notify)
-			}
+	// Repaint on every connection state change, not only on menu clicks:
+	// connections also open lazily from proxied requests, and the
+	// approval-pending state appears in the middle of an SSH dial.
+	for _, name := range connNames(cfg) {
+		switch d := c.connDialer(reg, name).(type) {
+		case *upstream.SSHDialer:
+			d.OnStateChange(c.sshStateChanged(d.State))
+		case *upstream.OpenConnectDialer:
+			d.OnStateChange(c.notify)
 		}
 	}
 
@@ -339,6 +344,8 @@ func (c *ProxyController) Start() error {
 	for _, h := range tunnels {
 		c.serveTunnel(h, h.ctx)
 	}
+
+	c.applyAutoconnect(reg, cfg)
 
 	go func() {
 		defer close(done)
@@ -380,36 +387,22 @@ func (c *ProxyController) Start() error {
 	return nil
 }
 
-// buildTunnels builds one SOCKS5 listener per ssh upstream that declares a
-// socks5Listen. Each is bound to that tunnel's dialer, so every connection
-// it accepts goes through that one bastion. Names are sorted so startup
-// order and log output are deterministic.
+// buildTunnels binds every configured listener (SOCKS5 or TCP forward),
+// keyed by its configured listen address. A pinned listener is bound to its
+// upstream's dialer; an unpinned one routes by m.
 func buildTunnels(
 	ctx context.Context,
 	cfg *config.Config,
 	reg *upstream.Registry,
+	m *match.Matcher,
 	logger *log.Logger,
 ) (map[string]*tunnelHandle, error) {
 	tunnels := make(map[string]*tunnelHandle)
 
-	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
-		u := cfg.Upstreams[name]
-		if u.Type != config.UpstreamSSH || u.Socks5Listen == "" {
-			continue
-		}
-
-		d, ok := reg.Get(name)
-		if !ok {
-			return nil, errors.Errorf("upstream %q: not in registry", name)
-		}
-
+	for _, l := range cfg.Listeners {
 		tctx, tcancel := context.WithCancel(ctx)
 
-		srv, err := socks5server.NewServer(tctx, socks5server.Options{
-			Listen: u.Socks5Listen,
-			Dialer: d,
-			Logger: logger,
-		})
+		srv, err := listener.New(tctx, l, reg, m, logger)
 		if err != nil {
 			tcancel()
 
@@ -417,17 +410,23 @@ func buildTunnels(
 				_ = h.srv.Close()
 			}
 
-			return nil, errors.Wrapf(err, "tunnel %q", name)
+			return nil, errors.Wrapf(err, "listener %q", l.Listen)
 		}
 
-		tunnels[name] = &tunnelHandle{
-			name:   name,
-			dialer: d,
-			listen: u.Socks5Listen,
-			srv:    srv,
-			ctx:    tctx,
-			cancel: tcancel,
-			done:   make(chan struct{}),
+		d, _ := reg.Get(l.Upstream)
+
+		tunnels[l.Listen] = &tunnelHandle{
+			name:     l.Listen,
+			upstream: l.Upstream,
+			dialer:   d,
+			listener: l,
+			reg:      reg,
+			matcher:  m,
+			logger:   logger,
+			srv:      srv,
+			ctx:      tctx,
+			cancel:   tcancel,
+			done:     make(chan struct{}),
 		}
 	}
 
@@ -502,11 +501,7 @@ func (c *ProxyController) StartTunnel(name string) error {
 
 	tctx, tcancel := context.WithCancel(baseCtx)
 
-	srv, err := socks5server.NewServer(tctx, socks5server.Options{
-		Listen: h.listen,
-		Dialer: h.dialer,
-		Logger: c.logger,
-	})
+	srv, err := listener.New(tctx, h.listener, h.reg, h.matcher, h.logger)
 	if err != nil {
 		tcancel()
 		return errors.Wrapf(err, "tunnel %q", name)
@@ -585,21 +580,43 @@ func (c *ProxyController) Restart() error {
 	return c.Start()
 }
 
-// ConnectVPN brings the named VPN up in the background, undoing a
-// DisconnectVPN. It returns once the attempt has started: connecting waits
-// for MFA approval, which must not hold the menu busy. A failure is logged
-// and shows in the VPN's state.
-func (c *ProxyController) ConnectVPN(name string) error {
-	d, ctx, err := c.vpn(name)
+// Autoconnect reports whether connections open on demand.
+func (c *ProxyController) Autoconnect() bool { return !c.manualOnly.Load() }
+
+// SetAutoconnect sets whether ssh and openconnect upstreams connect on
+// demand when a request needs them (the default). With it off, a request
+// only uses a connection that is already up; opening one takes a click on
+// the upstream's row. Applies immediately when running, and to every Start.
+func (c *ProxyController) SetAutoconnect(on bool) {
+	c.manualOnly.Store(!on)
+
+	c.mu.Lock()
+	reg, cfg := c.reg, c.cfg
+	c.mu.Unlock()
+
+	if cfg != nil {
+		c.applyAutoconnect(reg, cfg)
+	}
+
+	c.notify()
+}
+
+// ConnectUpstream opens the named ssh or openconnect upstream's connection
+// in the background, undoing a DisconnectUpstream. It returns once the
+// attempt has started: connecting can wait on an MFA push or an agent
+// approval, which must not hold the menu busy. A failure is logged and
+// shows in the upstream's state.
+func (c *ProxyController) ConnectUpstream(name string) error {
+	d, ctx, err := c.conn(name)
 	if err != nil {
 		return err
 	}
 
 	go func() {
-		// Up publishes ConnConnecting through OnStateChange; the notify
-		// after it returns covers the outcome.
-		if err := d.Up(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, openconnect.ErrDisconnected) {
-			c.logger.Warn("connect vpn", "name", name, "err", err)
+		// Up publishes its states through OnStateChange; the notify after
+		// it returns covers the outcome.
+		if err := d.Up(ctx); err != nil && ctx.Err() == nil {
+			c.logger.Warn("connect upstream", "name", name, "err", err)
 		}
 
 		c.notify()
@@ -608,11 +625,12 @@ func (c *ProxyController) ConnectVPN(name string) error {
 	return nil
 }
 
-// DisconnectVPN stops the named VPN, aborting a connect in flight, and
-// keeps it down until ConnectVPN: requests routed through it fail rather
-// than silently reconnecting and prompting for another approval.
-func (c *ProxyController) DisconnectVPN(name string) error {
-	d, _, err := c.vpn(name)
+// DisconnectUpstream closes the named upstream's connection, aborting a
+// connect in flight, and keeps it closed until ConnectUpstream: requests
+// routed through it fail rather than silently reconnecting and prompting
+// for another approval.
+func (c *ProxyController) DisconnectUpstream(name string) error {
+	d, _, err := c.conn(name)
 	if err != nil {
 		return err
 	}
@@ -680,7 +698,7 @@ func (c *ProxyController) connectTunnel(h *tunnelHandle, tctx context.Context) {
 			// Not fatal: the listener stays up and each connection
 			// retries the dial lazily, so this is the same state the
 			// tunnel would have been in without the eager connect.
-			if tctx.Err() == nil {
+			if tctx.Err() == nil && !errors.Is(err, sshclient.ErrDisconnected) {
 				c.logger.Warn("connect tunnel", "name", h.name, "err", err)
 			}
 		}
@@ -744,7 +762,7 @@ func (c *ProxyController) statusLocked() Status {
 	if c.cfg != nil {
 		st.Chrome = c.cfg.Chrome
 		st.Forwards = forwardStatus(c.cfg)
-		st.VPNs = c.vpnStatusLocked()
+		st.Upstreams = c.upstreamStatusLocked()
 	}
 
 	return st
@@ -764,13 +782,31 @@ func forwardStatus(cfg *config.Config) []ForwardStatus {
 	return out
 }
 
-// vpnNames lists the config's "openconnect" upstreams, sorted by name so
-// the menu order is stable across rebuilds.
-func vpnNames(cfg *config.Config) []string {
+// connDialer is what the menu needs from an upstream with a connection.
+type connDialer interface {
+	SetAutoconnect(on bool)
+	Up(ctx context.Context) error
+	Down()
+	State() sshclient.ConnState
+}
+
+// applyAutoconnect pushes the autoconnect setting to every connection
+// upstream in reg.
+func (c *ProxyController) applyAutoconnect(reg *upstream.Registry, cfg *config.Config) {
+	for _, name := range connNames(cfg) {
+		if d := c.connDialer(reg, name); d != nil {
+			d.SetAutoconnect(c.Autoconnect())
+		}
+	}
+}
+
+// connNames lists the config's ssh and openconnect upstreams, sorted by
+// name so the menu order is stable across rebuilds.
+func connNames(cfg *config.Config) []string {
 	var out []string
 
 	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
-		if cfg.Upstreams[name].Type == config.UpstreamOpenConnect {
+		if t := cfg.Upstreams[name].Type; t == config.UpstreamSSH || t == config.UpstreamOpenConnect {
 			out = append(out, name)
 		}
 	}
@@ -778,20 +814,17 @@ func vpnNames(cfg *config.Config) []string {
 	return out
 }
 
-// vpnStatusLocked builds the []VPNStatus snapshot. Callers must hold c.mu.
-func (c *ProxyController) vpnStatusLocked() []VPNStatus {
-	names := vpnNames(c.cfg)
-	out := make([]VPNStatus, 0, len(names))
+// upstreamStatusLocked builds the []UpstreamStatus snapshot. Callers must
+// hold c.mu.
+func (c *ProxyController) upstreamStatusLocked() []UpstreamStatus {
+	names := connNames(c.cfg)
+	out := make([]UpstreamStatus, 0, len(names))
 
 	for _, name := range names {
-		st := VPNStatus{Name: name}
+		st := UpstreamStatus{Name: name, Type: c.cfg.Upstreams[name].Type}
 
-		if c.reg != nil {
-			if d, ok := c.reg.Get(name); ok {
-				if od, ok := d.(*upstream.OpenConnectDialer); ok {
-					st.ConnState = od.State()
-				}
-			}
+		if d := c.connDialer(c.reg, name); d != nil {
+			st.ConnState = d.State()
 		}
 
 		out = append(out, st)
@@ -800,22 +833,35 @@ func (c *ProxyController) vpnStatusLocked() []VPNStatus {
 	return out
 }
 
-// vpn returns the named VPN dialer and the running proxy's base context.
-func (c *ProxyController) vpn(name string) (*upstream.OpenConnectDialer, context.Context, error) {
+// connDialer returns the named upstream's dialer if it holds a connection,
+// else nil. reg may be nil.
+func (c *ProxyController) connDialer(reg *upstream.Registry, name string) connDialer {
+	if reg == nil {
+		return nil
+	}
+
+	d, _ := reg.Get(name)
+	cd, _ := d.(connDialer)
+
+	return cd
+}
+
+// conn returns the named connection upstream and the running proxy's base
+// context.
+func (c *ProxyController) conn(name string) (connDialer, context.Context, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.state != StateRunning || c.reg == nil {
+	if c.state != StateRunning {
 		return nil, nil, errors.New("controller not running")
 	}
 
-	if d, ok := c.reg.Get(name); ok {
-		if od, ok := d.(*upstream.OpenConnectDialer); ok {
-			return od, c.baseCtx, nil
-		}
+	d := c.connDialer(c.reg, name)
+	if d == nil {
+		return nil, nil, errors.Errorf("upstream %q: unknown or has no connection", name)
 	}
 
-	return nil, nil, errors.Errorf("vpn %q: unknown", name)
+	return d, c.baseCtx, nil
 }
 
 // tunnelStatusLocked builds the []TunnelStatus snapshot from c.tunnels.
@@ -826,16 +872,12 @@ func (c *ProxyController) tunnelStatusLocked() []TunnelStatus {
 	for _, name := range slices.Sorted(maps.Keys(c.tunnels)) {
 		h := c.tunnels[name]
 
-		st := TunnelStatus{Name: name}
+		st := TunnelStatus{Name: name, Upstream: h.upstream, Target: h.listener.Target}
 		if h.srv != nil {
 			st.State = TunnelListening
 			st.Addr = h.srv.Addr()
 		} else {
 			st.State = TunnelStopped
-		}
-
-		if sd, ok := h.dialer.(*upstream.SSHDialer); ok {
-			st.ConnState = sd.State()
 		}
 
 		out = append(out, st)

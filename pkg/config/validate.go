@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -20,6 +21,12 @@ const (
 	UpstreamSSH         = "ssh"
 	UpstreamForward     = "forward"
 	UpstreamOpenConnect = "openconnect"
+)
+
+// Listener type constants used by Listener.Type. Empty means socks5.
+const (
+	ListenerSocks5 = "socks5"
+	ListenerTCP    = "tcp"
 )
 
 // openConnectProtocols are the --protocol values openconnect accepts.
@@ -68,11 +75,57 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	seen := make(map[string]string, len(c.Upstreams))
-
 	referenced := make(map[string]struct{}, len(c.Rules))
 	for _, r := range c.Rules {
 		referenced[r.Upstream] = struct{}{}
+	}
+
+	seen := make(map[string]struct{})
+
+	for i, l := range c.Listeners {
+		path := "listeners[" + strconv.Itoa(i) + "]"
+
+		if l.Listen == "" {
+			return errors.Errorf("%s.listen: required", path)
+		}
+
+		if _, _, err := net.SplitHostPort(l.Listen); err != nil {
+			return errors.Wrapf(err, "%s.listen", path)
+		}
+
+		if _, dup := seen[l.Listen]; dup {
+			return errors.Errorf("%s.listen: duplicate %q", path, l.Listen)
+		}
+
+		seen[l.Listen] = struct{}{}
+
+		switch l.Type {
+		case "", ListenerSocks5:
+			if l.Target != "" {
+				return errors.Errorf("%s.target: only valid on type %q", path, ListenerTCP)
+			}
+		case ListenerTCP:
+			host, _, err := net.SplitHostPort(l.Target)
+			if err != nil {
+				return errors.Wrapf(err, "%s.target", path)
+			}
+
+			if host == "" {
+				return errors.Errorf("%s.target: host required, got %q", path, l.Target)
+			}
+		default:
+			return errors.Errorf("%s.type: unknown %q", path, l.Type)
+		}
+
+		if l.Upstream == "" {
+			continue
+		}
+
+		if _, ok := c.Upstreams[l.Upstream]; !ok {
+			return errors.Errorf("%s.upstream: unknown upstream %q", path, l.Upstream)
+		}
+
+		referenced[l.Upstream] = struct{}{}
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
@@ -93,27 +146,12 @@ func (c *Config) Validate() error {
 		referenced[via] = struct{}{}
 	}
 
+	// ssh and openconnect upstreams hold a connection or process; one that
+	// no rule, listener or via uses is a config mistake.
 	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
-		u := c.Upstreams[name]
-
-		if u.Socks5Listen != "" {
-			if other, dup := seen[u.Socks5Listen]; dup {
-				return errors.Errorf("upstreams.%s.socks5Listen: duplicate of upstreams.%s (%q)",
-					name, other, u.Socks5Listen)
-			}
-
-			seen[u.Socks5Listen] = name
-		}
-
-		if u.Type == UpstreamSSH && u.Socks5Listen == "" {
+		if t := c.Upstreams[name].Type; t == UpstreamSSH || t == UpstreamOpenConnect {
 			if _, ok := referenced[name]; !ok {
-				return errors.Errorf("upstreams.%s: unreferenced ssh upstream with no socks5Listen", name)
-			}
-		}
-
-		if u.Type == UpstreamOpenConnect {
-			if _, ok := referenced[name]; !ok {
-				return errors.Errorf("upstreams.%s: unreferenced openconnect upstream", name)
+				return errors.Errorf("upstreams.%s: unreferenced %s upstream: no rule, listener or via uses it", name, t)
 			}
 		}
 	}
@@ -196,12 +234,6 @@ func (u Upstream) validateSSH() error {
 		}
 	}
 
-	if u.Socks5Listen != "" {
-		if _, _, err := net.SplitHostPort(u.Socks5Listen); err != nil {
-			return errors.Wrap(err, "socks5Listen")
-		}
-	}
-
 	return nil
 }
 
@@ -219,7 +251,6 @@ func (u Upstream) rejectSSHFields() error {
 		{"keyFilePassphrase", u.KeyFilePassphrase != ""},
 		{"identityAgent", u.IdentityAgent != ""},
 		{"hostKey", u.HostKey != ""},
-		{"socks5Listen", u.Socks5Listen != ""},
 		{"via", u.Via != ""},
 	} {
 		if f.set {
