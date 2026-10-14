@@ -21,6 +21,13 @@
     },
     "Config": {
       "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ],
+          "description": "config format version"
+        },
         "listen": {
           "type": "string",
           "description": "local proxy listen address (host:port)"
@@ -51,6 +58,12 @@
           },
           "type": "array"
         },
+        "listeners": {
+          "items": {
+            "$ref": "#/$defs/Listener"
+          },
+          "type": "array"
+        },
         "chrome": {
           "$ref": "#/$defs/Chrome"
         }
@@ -58,10 +71,40 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "version",
         "listen",
         "logLevel",
         "upstreams",
         "rules"
+      ]
+    },
+    "Listener": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "socks5",
+            "tcp"
+          ],
+          "default": "socks5"
+        },
+        "listen": {
+          "type": "string",
+          "description": "local listen address (host:port)"
+        },
+        "upstream": {
+          "type": "string",
+          "description": "pin every connection to this upstream; omit to route by rules"
+        },
+        "target": {
+          "type": "string",
+          "description": "tcp: host:port every connection is forwarded to"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "listen"
       ]
     },
     "Rule": {
@@ -134,7 +177,7 @@
         },
         "keyFilePassphrase": {
           "type": "string",
-          "description": "ssh: passphrase for an encrypted keyFile"
+          "description": "ssh: passphrase for an encrypted keyFile; literal or secret reference (op://... | keychain://service/account | cmd:...)"
         },
         "identityAgent": {
           "type": "string",
@@ -143,10 +186,6 @@
         "hostKey": {
           "type": "string",
           "description": "ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"
-        },
-        "socks5Listen": {
-          "type": "string",
-          "description": "ssh: local SOCKS5 listen address (host:port)"
         },
         "via": {
           "type": "string",
@@ -183,10 +222,12 @@
     "UpstreamAuth": {
       "properties": {
         "username": {
-          "type": "string"
+          "type": "string",
+          "description": "literal or secret reference (op://... | keychain://service/account | cmd:...)"
         },
         "password": {
-          "type": "string"
+          "type": "string",
+          "description": "literal or secret reference (op://... | keychain://service/account | cmd:...)"
         }
       },
       "additionalProperties": false,

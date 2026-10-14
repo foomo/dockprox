@@ -72,8 +72,8 @@ build:
 	@go build -o bin/dockprox cmd/dockprox/dockprox.go
 
 .PHONY: build.menubar
-## Build macOS menubar app binary (darwin only)
 build.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
+## Build macOS menubar app binary (darwin only)
 build.menubar:
 ifeq ($(shell uname),Darwin)
 	@echo "〉go build bin/dockprox-menubar"
@@ -84,13 +84,13 @@ else
 endif
 
 .PHONY: package.menubar
-## Package macOS menubar app into dist/Dockprox.app (darwin only)
 # CODESIGN_IDENTITY selects the signing identity. The "-" default is an
 # ad-hoc signature, which needs no certificate but produces a new code hash
 # on every build. Override it with a Developer ID for a stable identity —
 # see the warning printed after signing.
 package.menubar: CODESIGN_IDENTITY ?= -
 package.menubar: VERSION ?= $(shell git describe --tags --always --dirty)
+## Package macOS menubar app into dist/Dockprox.app (darwin only)
 package.menubar: build.menubar
 ifeq ($(shell uname),Darwin)
 	@echo "〉packaging dist/Dockprox.app ($(VERSION))"

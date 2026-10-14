@@ -42,12 +42,14 @@ func (d *HTTPDialer) Name() string { return d.name }
 
 // Dial implements Dialer.
 func (d *HTTPDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error) {
+	username, password, err := resolveAuth(ctx, d.cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
+
 	dialer := &net.Dialer{}
 
-	var (
-		c   net.Conn
-		err error
-	)
+	var c net.Conn
 
 	if d.url.Scheme == "https" {
 		tlsCfg, e := d.tlsConfig()
@@ -75,7 +77,7 @@ func (d *HTTPDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error
 
 	if d.cfg.Auth != nil {
 		token := base64.StdEncoding.EncodeToString(
-			[]byte(d.cfg.Auth.Username + ":" + d.cfg.Auth.Password))
+			[]byte(username + ":" + password))
 		req += "Proxy-Authorization: Basic " + token + "\r\n"
 	}
 

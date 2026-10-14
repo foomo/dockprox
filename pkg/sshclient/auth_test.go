@@ -23,7 +23,7 @@ import (
 func shortSock(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "ag")
+	dir, err := os.MkdirTemp("", "ag") //nolint:usetesting // t.TempDir() overflows the socket path limit, see above
 	if err != nil {
 		t.Fatal(err)
 	}

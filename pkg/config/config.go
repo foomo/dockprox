@@ -1,13 +1,32 @@
 package config
 
+// Version is the config format version this build accepts. Every config
+// file must declare it as `version: 1`.
+const Version = 1
+
 // Config is the top-level dockprox configuration.
 type Config struct {
+	Version   int                 `json:"version"           yaml:"version"           jsonschema:"enum=1,description=config format version"`
 	Listen    string              `json:"listen"            yaml:"listen"            jsonschema:"description=local proxy listen address (host:port)"`
 	LogLevel  string              `json:"logLevel"          yaml:"logLevel"          jsonschema:"enum=debug,enum=info,enum=warn,enum=error,default=info"`
 	LogFile   string              `json:"logFile,omitempty" yaml:"logFile,omitempty" jsonschema:"description=log file path (default: OS cache dir)"`
 	Upstreams map[string]Upstream `json:"upstreams"         yaml:"upstreams"`
 	Rules     []Rule              `json:"rules"             yaml:"rules"`
+	Listeners []Listener          `json:"listeners,omitempty" yaml:"listeners,omitempty"`
 	Chrome    *Chrome             `json:"chrome,omitempty"  yaml:"chrome,omitempty"`
+}
+
+// Listener is a local port. A socks5 listener (the default) is a SOCKS5
+// server; a tcp listener forwards every connection to Target, like
+// `ssh -L`. With Upstream set it is pinned: every connection goes through
+// that upstream and rules are ignored. Without, the requested host (socks5)
+// or Target's host (tcp) is routed by rules, and unmatched hosts dial
+// direct.
+type Listener struct {
+	Type     string `json:"type,omitempty"     yaml:"type,omitempty"     jsonschema:"enum=socks5,enum=tcp,default=socks5"`
+	Listen   string `json:"listen"             yaml:"listen"             jsonschema:"description=local listen address (host:port)"`
+	Upstream string `json:"upstream,omitempty" yaml:"upstream,omitempty" jsonschema:"description=pin every connection to this upstream; omit to route by rules"`
+	Target   string `json:"target,omitempty"   yaml:"target,omitempty"   jsonschema:"description=tcp: host:port every connection is forwarded to"`
 }
 
 // Chrome configures the isolated Chrome instance the menu bar app can
@@ -31,10 +50,9 @@ type Upstream struct {
 	Port              int    `json:"port,omitempty"              yaml:"port,omitempty"              jsonschema:"description=ssh: port (default 22)"`
 	User              string `json:"user,omitempty"              yaml:"user,omitempty"              jsonschema:"description=ssh: login user (default: current OS user)"`
 	KeyFile           string `json:"keyFile,omitempty"           yaml:"keyFile,omitempty"           jsonschema:"description=ssh: private key path"`
-	KeyFilePassphrase string `json:"keyFilePassphrase,omitempty" yaml:"keyFilePassphrase,omitempty" jsonschema:"description=ssh: passphrase for an encrypted keyFile"`
+	KeyFilePassphrase string `json:"keyFilePassphrase,omitempty" yaml:"keyFilePassphrase,omitempty" jsonschema:"description=ssh: passphrase for an encrypted keyFile; literal or secret reference (op://... | keychain://service/account | cmd:...)"`
 	IdentityAgent     string `json:"identityAgent,omitempty"     yaml:"identityAgent,omitempty"     jsonschema:"description=ssh: SSH_AUTH_SOCK or an agent socket path"`
 	HostKey           string `json:"hostKey,omitempty"           yaml:"hostKey,omitempty"           jsonschema:"description=ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"`
-	Socks5Listen      string `json:"socks5Listen,omitempty"      yaml:"socks5Listen,omitempty"      jsonschema:"description=ssh: local SOCKS5 listen address (host:port)"`
 	Via               string `json:"via,omitempty"               yaml:"via,omitempty"               jsonschema:"description=ssh: name of a non-ssh upstream to dial the bastion through"`
 
 	// OpenConnect VPN fields; valid only when Type is "openconnect". Login
@@ -45,10 +63,11 @@ type Upstream struct {
 }
 
 // UpstreamAuth carries optional username/password for SOCKS5 (RFC 1929) or
-// HTTP Basic auth on the upstream CONNECT request.
+// HTTP Basic auth on the upstream CONNECT request, or the openconnect
+// login. Either may be a secret reference (see package secret).
 type UpstreamAuth struct {
-	Username string `json:"username" yaml:"username"`
-	Password string `json:"password" yaml:"password"`
+	Username string `json:"username" yaml:"username" jsonschema:"description=literal or secret reference (op://... | keychain://service/account | cmd:...)"`
+	Password string `json:"password" yaml:"password" jsonschema:"description=literal or secret reference (op://... | keychain://service/account | cmd:...)"`
 }
 
 // UpstreamTLS configures the TLS dial to an HTTPS upstream proxy. It does

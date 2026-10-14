@@ -9,6 +9,7 @@ import (
 
 func ExampleLoad() {
 	r := bytes.NewReader([]byte(`
+version: 1
 listen: 127.0.0.1:8888
 upstreams:
   jump: { type: socks5, addr: 127.0.0.1:1080 }

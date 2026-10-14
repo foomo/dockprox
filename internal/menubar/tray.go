@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
+	"github.com/foomo/dockprox/pkg/config"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -204,100 +205,91 @@ func (t *Tray) rebuildMenu() {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
 	}
 
-	// VPNs first, since tunnels may run through them: one row each, click
-	// to connect or disconnect — see vpnRow.
-	if len(snap.VPNs) > 0 {
-		menu.AddSeparator()
+	// Listeners, grouped with the HTTP proxy row above: one row each,
+	// click to start/stop it — see tunnelRow.
+	for _, ts := range snap.Tunnels {
+		name := ts.Name
 
-		for _, vs := range snap.VPNs {
-			name := vs.Name
-			glyph, label, connect := vpnRow(vs)
+		// Glyph and click action are derived together — see tunnelRow.
+		glyph, label, action := tunnelRow(ts)
 
-			item := menu.Add(fmt.Sprintf("%s %s: %s", glyph, name, label))
-			item.SetEnabled(snap.State == StateRunning)
+		item := menu.Add(glyph + " " + label)
+		item.SetEnabled(snap.State == StateRunning)
 
-			if connect {
-				item.OnClick(func(_ *application.Context) {
-					t.runBusy("connect vpn "+name, func() error {
-						return t.ctrl.ConnectVPN(name)
-					})
+		if action == tunnelActionStop {
+			item.OnClick(func(_ *application.Context) {
+				t.runBusy("stop tunnel "+name, func() error {
+					return t.ctrl.StopTunnel(name)
 				})
-			} else {
-				item.OnClick(func(_ *application.Context) {
-					t.runBusy("disconnect vpn "+name, func() error {
-						return t.ctrl.DisconnectVPN(name)
-					})
+			})
+		} else {
+			item.OnClick(func(_ *application.Context) {
+				t.runBusy("start tunnel "+name, func() error {
+					return t.ctrl.StartTunnel(name)
 				})
-			}
+			})
 		}
 	}
 
-	// Tunnels: one glyph+name row each, click to start/stop that tunnel,
-	// followed by a read-only row for its SSH connection while listening.
-	if len(snap.Tunnels) > 0 {
+	// Upstreams: ssh and openconnect connections, click to connect or
+	// disconnect (see upstreamRow), then forwards.
+	if len(snap.Upstreams)+len(snap.Forwards) > 0 {
 		menu.AddSeparator()
+	}
 
-		for _, ts := range snap.Tunnels {
-			name := ts.Name
+	for _, us := range snap.Upstreams {
+		name := us.Name
+		glyph, label, connect := upstreamRow(us)
 
-			// Glyph and click action are derived together — see tunnelRow.
-			glyph, addr, action := tunnelRow(ts)
+		item := menu.Add(glyph + " " + label)
+		item.SetEnabled(snap.State == StateRunning)
 
-			item := menu.Add(fmt.Sprintf("%s %s: %s", glyph, name, addr))
-			item.SetEnabled(snap.State == StateRunning)
-
-			if action == tunnelActionStop {
-				item.OnClick(func(_ *application.Context) {
-					t.runBusy("stop tunnel "+name, func() error {
-						return t.ctrl.StopTunnel(name)
-					})
+		if connect {
+			item.OnClick(func(_ *application.Context) {
+				t.runBusy("connect "+name, func() error {
+					return t.ctrl.ConnectUpstream(name)
 				})
-			} else {
-				item.OnClick(func(_ *application.Context) {
-					t.runBusy("start tunnel "+name, func() error {
-						return t.ctrl.StartTunnel(name)
-					})
+			})
+		} else {
+			item.OnClick(func(_ *application.Context) {
+				t.runBusy("disconnect "+name, func() error {
+					return t.ctrl.DisconnectUpstream(name)
 				})
-			}
-
-			if label, ok := connRow(ts); ok {
-				menu.Add("    " + label).SetEnabled(false)
-			}
+			})
 		}
 	}
 
-	// Forwards: one row per "forward" upstream, glyph reflecting whether
-	// the configured endpoint currently accepts a connection. Unlike
-	// tunnels these have nothing to start or stop, so the rows are
-	// informational only.
-	if len(snap.Forwards) > 0 {
-		menu.AddSeparator()
+	// Forwards: glyph reflecting whether the configured endpoint currently
+	// accepts a connection. They have nothing to connect or disconnect, so
+	// the rows are informational only.
+	up := t.forwardUp.Load()
 
-		up := t.forwardUp.Load()
+	for _, fs := range snap.Forwards {
+		// "?" until the first probe returns, so an unprobed forward is not
+		// misreported as down.
+		glyph := "?"
 
-		for _, fs := range snap.Forwards {
-			// "?" until the first probe returns, so an unprobed forward is
-			// not misreported as down.
-			glyph := "?"
+		if up != nil {
+			if reachable, ok := (*up)[fs.Name]; ok {
+				glyph = "○"
 
-			if up != nil {
-				if reachable, ok := (*up)[fs.Name]; ok {
-					glyph = "○"
-
-					if reachable {
-						glyph = "◉"
-					}
+				if reachable {
+					glyph = "◉"
 				}
 			}
-
-			menu.Add(fmt.Sprintf("%s %s: %s", glyph, fs.Name, fs.Addr)).SetEnabled(false)
 		}
+
+		menu.Add(fmt.Sprintf("%s %s (%s): %s", glyph, fs.Name, config.UpstreamForward, fs.Addr)).SetEnabled(false)
 	}
 
-	// Isolated Chrome instance pointed at the local proxy.
+	// Everything that is not a listener or upstream lives in Settings, so
+	// the top level stays a status view.
 	menu.AddSeparator()
 
-	chrome := menu.Add("↗ Open Chrome")
+	settings := menu.AddSubmenu("⚙︎ Settings")
+
+	// Isolated Chrome instance pointed at the local proxy.
+	chrome := settings.Add("▶︎ Chrome Sandbox")
 	chrome.SetEnabled(snap.State == StateRunning)
 	chrome.OnClick(func(_ *application.Context) {
 		t.runBusy("launch chrome", func() error {
@@ -308,22 +300,40 @@ func (t *Tray) rebuildMenu() {
 		})
 	})
 
-	// Actions grouped together: proxy lifecycle controls.
-	menu.AddSeparator()
+	// Proxy lifecycle controls.
+	settings.AddSeparator()
 
 	if snap.State == StateRunning {
-		menu.Add("⏹︎ Stop").OnClick(func(_ *application.Context) {
+		settings.Add("⏹︎ Stop").OnClick(func(_ *application.Context) {
 			t.runBusy("stop", t.ctrl.Stop)
 		})
 	} else {
-		menu.Add("▶︎ Start").OnClick(func(_ *application.Context) {
+		settings.Add("▶︎ Start").OnClick(func(_ *application.Context) {
 			t.runBusy("start", t.ctrl.Start)
 		})
 	}
 
-	menu.Add("↺ Restart").OnClick(func(_ *application.Context) {
+	settings.Add("↺ Restart").OnClick(func(_ *application.Context) {
 		t.runBusy("restart", t.ctrl.Restart)
 	}).SetEnabled(snap.State == StateRunning)
+
+	// Toggles.
+	settings.AddSeparator()
+
+	autoconnect := t.ctrl.Autoconnect()
+
+	settings.Add(checkGlyph(autoconnect) + " Autoconnect").OnClick(func(_ *application.Context) {
+		t.runBusy("toggle autoconnect", func() error {
+			on := !autoconnect
+			if err := SaveSettings(SettingsPath(), Settings{Autoconnect: &on}); err != nil {
+				return err
+			}
+
+			t.ctrl.SetAutoconnect(on)
+
+			return nil
+		})
+	})
 
 	// Read the cached value rather than calling Autostart.IsEnabled() here:
 	// that is a synchronous SMAppService call, and rebuildMenu runs on the
@@ -331,12 +341,7 @@ func (t *Tray) rebuildMenu() {
 	// cache current off-thread.
 	autostartEnabled := t.autostart.Load()
 
-	loginGlyph := "□"
-	if autostartEnabled {
-		loginGlyph = "☑︎"
-	}
-
-	menu.Add(loginGlyph + " Start at Login").OnClick(func(_ *application.Context) {
+	settings.Add(checkGlyph(autostartEnabled) + " Start at Login").OnClick(func(_ *application.Context) {
 		t.runBusy("toggle autostart", func() error {
 			var err error
 			if autostartEnabled {
@@ -355,18 +360,18 @@ func (t *Tray) rebuildMenu() {
 		})
 	})
 
-	// Config path: click to reveal in Finder.
-	menu.AddSeparator()
+	// Logs and config path: click to reveal in Finder.
+	settings.AddSeparator()
 
 	// Reveal only forks `open` and never waits, so it cannot stall the UI
 	// thread the way the lifecycle actions can — no runBusy needed.
-	menu.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
+	settings.Add("↗ Reveal logs in Finder").OnClick(func(_ *application.Context) {
 		if err := RevealInFinder(context.Background(), t.logPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
 
-	menu.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
+	settings.Add("↗ Reveal config in Finder").OnClick(func(_ *application.Context) {
 		if err := RevealInFinder(context.Background(), snap.ConfigPath); err != nil {
 			t.logger.Warn("reveal", "err", err)
 		}
@@ -380,4 +385,13 @@ func (t *Tray) rebuildMenu() {
 	})
 
 	t.systray.SetMenu(menu)
+}
+
+// checkGlyph renders a toggle's state as a menu glyph.
+func checkGlyph(on bool) string {
+	if on {
+		return "☑︎"
+	}
+
+	return "□"
 }

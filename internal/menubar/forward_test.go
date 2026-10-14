@@ -86,7 +86,8 @@ func TestProbeForwards_CancelledContextReportsDown(t *testing.T) {
 func writeForwardTestConfig(t *testing.T, dir, zAddr, aAddr string) string {
 	t.Helper()
 
-	yaml := fmt.Sprintf(`listen: 127.0.0.1:0
+	yaml := fmt.Sprintf(`version: 1
+listen: 127.0.0.1:0
 log_level: error
 upstreams:
   zeta:

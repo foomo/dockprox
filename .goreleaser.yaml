@@ -36,9 +36,13 @@ brews:
   - repository:
       owner: foomo
       name: homebrew-tap
-    caveats: "dockprox"
+    caveats: |
+      Optional tools, needed only by the features that use them:
+        openconnect upstreams: brew install openconnect ocproxy
+        op:// secrets:         brew install --cask 1password-cli
+      See https://github.com/foomo/dockprox/blob/main/docs/guide/installation.md#optional-dependencies
     homepage: "https://github.com/foomo/dockprox"
-    description: "Security configuration scanner for developer environments"
+    description: "Inverse HTTP(S) proxy with SOCKS5 support"
 
 dockers:
   - use: buildx
@@ -54,7 +58,7 @@ dockers:
       - '--pull'
       # https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
       - '--label=org.opencontainers.image.title={{.ProjectName}}'
-      - '--label=org.opencontainers.image.description=Security configuration scanner for developer environments'
+      - '--label=org.opencontainers.image.description=Inverse HTTP(S) proxy with SOCKS5 support'
       - '--label=org.opencontainers.image.source={{.GitURL}}'
       - '--label=org.opencontainers.image.url={{.GitURL}}'
       - '--label=org.opencontainers.image.documentation={{.GitURL}}'
@@ -76,7 +80,7 @@ dockers:
       - '--pull'
       # https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
       - '--label=org.opencontainers.image.title={{.ProjectName}}'
-      - '--label=org.opencontainers.image.description=Security configuration scanner for developer environments'
+      - '--label=org.opencontainers.image.description=Inverse HTTP(S) proxy with SOCKS5 support'
       - '--label=org.opencontainers.image.source={{.GitURL}}'
       - '--label=org.opencontainers.image.url={{.GitURL}}'
       - '--label=org.opencontainers.image.documentation={{.GitURL}}'

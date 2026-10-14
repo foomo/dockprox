@@ -2,7 +2,9 @@ package config
 
 import (
 	"io"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -14,6 +16,7 @@ import (
 // Defaults returns a Config preloaded with default values.
 func Defaults() *Config {
 	return &Config{
+		Version:  Version,
 		Listen:   "127.0.0.1:8888",
 		LogLevel: "info",
 	}
@@ -58,9 +61,27 @@ func LoadStdin() (*Config, error) {
 }
 
 func finalize(k *koanf.Koanf) (*Config, error) {
+	// Checked on the raw keys: Defaults would otherwise mask a missing version.
+	if !k.Exists("version") {
+		return nil, errors.Errorf("version: required, add `version: %d`", Version)
+	}
+
 	c := Defaults()
 	if err := k.UnmarshalWithConf("", c, koanf.UnmarshalConf{Tag: "yaml"}); err != nil {
 		return nil, errors.Wrap(err, "unmarshal")
+	}
+
+	if c.Version != Version {
+		return nil, errors.Errorf("version: unsupported %d, expected %d", c.Version, Version)
+	}
+
+	// Unknown keys are ignored on unmarshal, so a config written for the
+	// removed socks5Listen would silently lose its SOCKS5 port.
+	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
+		if k.Exists("upstreams." + name + ".socks5Listen") {
+			return nil, errors.Errorf(
+				"upstreams.%s.socks5Listen: removed, add `listeners: [{listen: ..., upstream: %s}]` instead", name, name)
+		}
 	}
 
 	if err := c.Validate(); err != nil {

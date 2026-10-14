@@ -223,3 +223,24 @@ func TestClient_DownAbortsStart(t *testing.T) {
 		t.Fatalf("state=%s after Down", c.State())
 	}
 }
+
+func TestClient_AutoconnectOff(t *testing.T) {
+	c := fakeClient(t, "ok", "secret")
+	c.SetAutoconnect(false)
+
+	if _, err := c.Get(t.Context()); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Get with autoconnect off: err=%v, want ErrDisconnected", err)
+	}
+
+	if c.proc != nil {
+		t.Fatal("Get started openconnect with autoconnect off")
+	}
+
+	if err := c.Up(t.Context()); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if _, err := c.Get(t.Context()); err != nil {
+		t.Fatalf("Get using running VPN: %v", err)
+	}
+}

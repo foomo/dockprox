@@ -54,6 +54,10 @@ func (d *OpenConnectDialer) Up(ctx context.Context) error { return d.cli.Up(ctx)
 // fail with openconnect.ErrDisconnected meanwhile.
 func (d *OpenConnectDialer) Down() { d.cli.Down() }
 
+// SetAutoconnect sets whether Dial and Connect start the VPN on demand (the
+// default). With it off, they only use a running one.
+func (d *OpenConnectDialer) SetAutoconnect(on bool) { d.cli.SetAutoconnect(on) }
+
 // Close stops the VPN.
 func (d *OpenConnectDialer) Close() error { return d.cli.Close() }
 

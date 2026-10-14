@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/pkg/errors"
 )
 
@@ -43,6 +44,11 @@ func (d *Socks5Dialer) Dial(ctx context.Context, hostPort string) (net.Conn, err
 		return nil, errors.New("port out of range")
 	}
 
+	username, password, err := resolveAuth(ctx, d.cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
+
 	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.cfg.Addr)
 	if err != nil {
 		return nil, errors.Wrap(err, "dial socks5")
@@ -75,16 +81,16 @@ func (d *Socks5Dialer) Dial(ctx context.Context, hostPort string) (net.Conn, err
 	}
 
 	if d.cfg.Auth != nil {
-		if len(d.cfg.Auth.Username) > 255 || len(d.cfg.Auth.Password) > 255 {
+		if len(username) > 255 || len(password) > 255 {
 			return nil, errors.New("socks5 auth credential too long (RFC 1929 max 255 bytes)")
 		}
 
 		req := []byte{0x01}
-		req = append(req, byte(len(d.cfg.Auth.Username))) //nolint:gosec // bounded by check above
-		req = append(req, d.cfg.Auth.Username...)
-		req = append(req, byte(len(d.cfg.Auth.Password))) //nolint:gosec // bounded by check above
+		req = append(req, byte(len(username))) //nolint:gosec // bounded by check above
+		req = append(req, username...)
+		req = append(req, byte(len(password))) //nolint:gosec // bounded by check above
 
-		req = append(req, d.cfg.Auth.Password...)
+		req = append(req, password...)
 		if _, err := c.Write(req); err != nil {
 			return nil, err
 		}
@@ -175,4 +181,24 @@ func (d *Socks5Dialer) Dial(ctx context.Context, hostPort string) (net.Conn, err
 	ok = true
 
 	return c, nil
+}
+
+// resolveAuth returns a's credentials with secret references resolved, or
+// empty strings when a is nil.
+func resolveAuth(ctx context.Context, a *config.UpstreamAuth) (string, string, error) {
+	if a == nil {
+		return "", "", nil
+	}
+
+	username, err := secret.Resolve(ctx, a.Username)
+	if err != nil {
+		return "", "", errors.Wrap(err, "auth.username")
+	}
+
+	password, err := secret.Resolve(ctx, a.Password)
+	if err != nil {
+		return "", "", errors.Wrap(err, "auth.password")
+	}
+
+	return username, password, nil
 }

@@ -28,7 +28,7 @@ func (t *Target) authMethods(ctx context.Context, att *attempt) ([]ssh.AuthMetho
 	var methods []ssh.AuthMethod
 
 	if t.KeyFile != "" {
-		signer, err := t.keySigner()
+		signer, err := t.keySigner(ctx)
 		if err != nil {
 			return nil, noop, err
 		}

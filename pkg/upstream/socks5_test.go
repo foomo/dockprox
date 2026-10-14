@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/foomo/dockprox/pkg/upstream"
 )
 
@@ -54,6 +55,29 @@ func TestSocks5Dialer_Auth_OK(t *testing.T) {
 		Type: config.UpstreamSocks5,
 		Addr: proxy.addr,
 		Auth: &config.UpstreamAuth{Username: "u", Password: "p"},
+	})
+
+	conn, err := d.Dial(context.Background(), backend.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+
+	conn.Close()
+}
+
+func TestSocks5Dialer_Auth_SecretRef(t *testing.T) {
+	prev := secret.Default()
+	secret.SetDefault(secret.New(secret.WithCmd()))
+	t.Cleanup(func() { secret.SetDefault(prev) })
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer backend.Close()
+
+	proxy := newFakeSocks5Auth(t, backend.Listener.Addr().String(), "u", "p")
+	d := upstream.NewSocks5("jump", config.Upstream{
+		Type: config.UpstreamSocks5,
+		Addr: proxy.addr,
+		Auth: &config.UpstreamAuth{Username: "u", Password: "cmd:printf p"},
 	})
 
 	conn, err := d.Dial(context.Background(), backend.Listener.Addr().String())

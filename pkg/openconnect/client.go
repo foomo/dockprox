@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/pkg/errors"
 )
@@ -41,6 +42,7 @@ type Client struct {
 	openconnect string
 	ocproxy     string
 	args        []string
+	username    string
 	password    string
 
 	ctx    context.Context //nolint:containedctx // cancelled by Close to abort an in-flight start
@@ -50,6 +52,9 @@ type Client struct {
 	// stays down until they connect it again, rather than being restarted
 	// (and asking for another approval) by the next request.
 	held atomic.Bool
+	// manualOnly is set by SetAutoconnect(false): Get may still use a
+	// running VPN, but only Up starts one.
+	manualOnly atomic.Bool
 	// abortMu guards abort, which cancels the start in flight, if any.
 	abortMu sync.Mutex
 	abort   context.CancelFunc
@@ -70,7 +75,8 @@ type process struct {
 	out  *tail
 }
 
-// ErrDisconnected is returned by Get while the VPN is held down by Down.
+// ErrDisconnected is returned by Get while the VPN is held down by Down, or
+// when it would have to start with autoconnect off.
 var ErrDisconnected = errors.New("openconnect: disconnected")
 
 // New returns a Client for an openconnect upstream. Both binaries are
@@ -91,7 +97,7 @@ func New(u config.Upstream) (*Client, error) {
 		protocol = defaultProtocol
 	}
 
-	args := []string{"--protocol", protocol, "--user", u.Auth.Username, "--passwd-on-stdin", "--non-inter"}
+	args := []string{"--protocol", protocol, "--passwd-on-stdin", "--non-inter"}
 	if u.ServerCert != "" {
 		args = append(args, "--servercert", u.ServerCert)
 	}
@@ -102,6 +108,7 @@ func New(u config.Upstream) (*Client, error) {
 		openconnect: oc,
 		ocproxy:     ocp,
 		args:        append(args, u.Server),
+		username:    u.Auth.Username,
 		password:    u.Auth.Password,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -120,68 +127,25 @@ func (c *Client) OnStateChange(fn func()) {
 	c.onChange.Store(&fn)
 }
 
-// Get returns the SOCKS5 address of a running VPN, starting openconnect if
-// it is not running. Starting blocks until the tunnel is up, which includes
-// any MFA approval, bounded by connectTimeout.
-func (c *Client) Get(ctx context.Context) (string, error) {
-	queued := time.Now()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.ctx.Err() != nil {
-		return "", errors.New("openconnect: closed")
-	}
-
-	if p := c.proc; p != nil {
-		select {
-		case <-p.done:
-			c.proc = nil
-		default:
-			c.setState(sshclient.ConnConnected)
-			return p.addr, nil
-		}
-	}
-
-	// A start that failed while this call waited on mu has already answered
-	// it. Retrying would prompt the user for another approval per caller.
-	if c.lastErr != nil && c.lastErrAt.After(queued) {
-		return "", c.lastErr
-	}
-
-	sctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	if !c.setAbort(cancel) {
-		return "", ErrDisconnected
-	}
-	defer c.setAbort(nil)
-
-	c.setState(sshclient.ConnConnecting)
-
-	p, err := c.start(sctx)
-	if err != nil {
-		c.setState(sshclient.ConnDisconnected)
-
-		if sctx.Err() == nil {
-			c.lastErr, c.lastErrAt = err, time.Now()
-		}
-
-		return "", err
-	}
-
-	c.proc = p
-	c.lastErr = nil
-	c.setState(sshclient.ConnConnected)
-
-	return p.addr, nil
+// SetAutoconnect sets whether Get starts the VPN on demand (the default).
+// With it off, Get only uses a running VPN and starting one needs Up.
+func (c *Client) SetAutoconnect(on bool) {
+	c.manualOnly.Store(!on)
 }
 
-// Up clears a Down and brings the VPN up, blocking like Get.
+// Get returns the SOCKS5 address of a running VPN, starting openconnect if
+// it is not running and autoconnect is on. Starting blocks until the tunnel
+// is up, which includes any MFA approval, bounded by connectTimeout.
+func (c *Client) Get(ctx context.Context) (string, error) {
+	return c.get(ctx, false)
+}
+
+// Up clears a Down and brings the VPN up, blocking like Get, whether or not
+// autoconnect is on.
 func (c *Client) Up(ctx context.Context) error {
 	c.held.Store(false)
 
-	_, err := c.Get(ctx)
+	_, err := c.get(ctx, true)
 
 	return err
 }
@@ -227,6 +191,66 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// get is Get; explicit marks a start the user asked for (Up), which
+// autoconnect does not gate.
+func (c *Client) get(ctx context.Context, explicit bool) (string, error) {
+	queued := time.Now()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.ctx.Err() != nil {
+		return "", errors.New("openconnect: closed")
+	}
+
+	if p := c.proc; p != nil {
+		select {
+		case <-p.done:
+			c.proc = nil
+		default:
+			c.setState(sshclient.ConnConnected)
+			return p.addr, nil
+		}
+	}
+
+	if !explicit && c.manualOnly.Load() {
+		return "", ErrDisconnected
+	}
+
+	// A start that failed while this call waited on mu has already answered
+	// it. Retrying would prompt the user for another approval per caller.
+	if c.lastErr != nil && c.lastErrAt.After(queued) {
+		return "", c.lastErr
+	}
+
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if !c.setAbort(cancel) {
+		return "", ErrDisconnected
+	}
+	defer c.setAbort(nil)
+
+	c.setState(sshclient.ConnConnecting)
+
+	p, err := c.start(sctx)
+	if err != nil {
+		c.setState(sshclient.ConnDisconnected)
+
+		if sctx.Err() == nil {
+			c.lastErr, c.lastErrAt = err, time.Now()
+		}
+
+		return "", err
+	}
+
+	c.proc = p
+	c.lastErr = nil
+	c.setState(sshclient.ConnConnected)
+
+	return p.addr, nil
+}
+
 // setAbort publishes the cancel func of the start about to run, or clears
 // it with nil. It reports false when Down got there first; checking held
 // under abortMu means a Down either sees this start's cancel or is seen by
@@ -245,6 +269,18 @@ func (c *Client) setAbort(cancel context.CancelFunc) bool {
 }
 
 func (c *Client) start(ctx context.Context) (*process, error) {
+	// Resolved per start, not in New: a locked password manager must not
+	// fail startup, and its unlock prompt belongs to the connect.
+	username, err := secret.Resolve(ctx, c.username)
+	if err != nil {
+		return nil, errors.Wrap(err, "username")
+	}
+
+	password, err := secret.Resolve(ctx, c.password)
+	if err != nil {
+		return nil, errors.Wrap(err, "password")
+	}
+
 	port, err := freePort(ctx)
 	if err != nil {
 		return nil, err
@@ -255,10 +291,10 @@ func (c *Client) start(ctx context.Context) (*process, error) {
 
 	out := &tail{}
 	// Bound to c.ctx, not ctx: the VPN outlives the call that started it.
-	cmd := exec.CommandContext(c.ctx, c.openconnect, append([]string{"--script-tun", "--script", script}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
+	cmd := exec.CommandContext(c.ctx, c.openconnect, append([]string{"--script-tun", "--script", script, "--user", username}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = stopTimeout
-	cmd.Stdin = strings.NewReader(c.password + "\n")
+	cmd.Stdin = strings.NewReader(password + "\n")
 	cmd.Stdout = out
 	cmd.Stderr = out
 

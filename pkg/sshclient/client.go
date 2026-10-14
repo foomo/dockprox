@@ -48,7 +48,22 @@ type Client struct {
 	// under mu would freeze the menu bar for that whole window.
 	state    atomic.Int32
 	onChange atomic.Pointer[func()]
+
+	// held is set by Down and cleared by Up: a connection the user closed
+	// stays closed until they open it again, rather than being redialled
+	// (and asking the agent for another approval) by the next request.
+	held atomic.Bool
+	// manualOnly is set by SetAutoconnect(false): Get may still reuse a
+	// live connection, but only Up dials a new one.
+	manualOnly atomic.Bool
+	// abortMu guards abort, which cancels the dial in flight, if any.
+	abortMu sync.Mutex
+	abort   context.CancelFunc
 }
+
+// ErrDisconnected is returned by Get while the connection is held down by
+// Down, or when it would have to dial with autoconnect off.
+var ErrDisconnected = errors.New("ssh: disconnected")
 
 // NewClient returns a Client for t. No network activity happens here.
 func NewClient(t *Target) *Client {
@@ -69,7 +84,14 @@ func (c *Client) State() ConnState {
 //
 // Get sets the same state once it reaches its own dial, so calling this is
 // optional; it only moves the transition earlier.
+//
+// It does nothing while the connection is held down by Down or autoconnect
+// is off, since Get will not dial then.
 func (c *Client) MarkConnecting() {
+	if c.held.Load() || c.manualOnly.Load() {
+		return
+	}
+
 	c.setState(ConnConnecting)
 }
 
@@ -81,51 +103,50 @@ func (c *Client) OnStateChange(fn func()) {
 	c.onChange.Store(&fn)
 }
 
-// Get returns a live *ssh.Client, connecting or reconnecting as needed.
+// SetAutoconnect sets whether Get dials on demand (the default). With it
+// off, Get only reuses a live connection and a new one needs Up.
+func (c *Client) SetAutoconnect(on bool) {
+	c.manualOnly.Store(!on)
+}
+
+// Get returns a live *ssh.Client, connecting or reconnecting as needed
+// unless autoconnect is off.
 func (c *Client) Get(ctx context.Context) (*ssh.Client, error) {
-	queued := time.Now()
+	return c.get(ctx, false)
+}
+
+// Up clears a Down and connects, blocking like Get, whether or not
+// autoconnect is on.
+func (c *Client) Up(ctx context.Context) error {
+	c.held.Store(false)
+
+	_, err := c.get(ctx, true)
+
+	return err
+}
+
+// Down closes the connection, aborting a dial in flight, and keeps it
+// closed: Get returns ErrDisconnected until Up is called. State returns to
+// ConnUnknown.
+func (c *Client) Down() {
+	c.held.Store(true)
+
+	c.abortMu.Lock()
+	if c.abort != nil {
+		c.abort()
+	}
+	c.abortMu.Unlock()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.cli != nil {
-		if _, _, err := c.cli.SendRequest("keepalive@openssh.com", true, nil); err == nil {
-			c.setState(ConnConnected)
-			return c.cli, nil
-		}
-
 		_ = c.cli.Close()
 		c.cli = nil
 	}
 
-	// A dial that failed while this call waited on mu has already answered
-	// it. Redialing would stack another full timeout per queued connection.
-	if c.lastErr != nil && c.lastErrAt.After(queued) {
-		return nil, c.lastErr
-	}
-
-	// Published before the dial so an observer (the menu bar) can show the
-	// attempt while it is in flight.
-	c.setState(ConnConnecting)
-
-	cli, err := c.dial(ctx)
-	if err != nil {
-		c.setState(ConnDisconnected)
-
-		// A cancelled caller says nothing about the upstream, so its error
-		// must not be handed to the calls queued behind it.
-		if ctx.Err() == nil {
-			c.lastErr, c.lastErrAt = err, time.Now()
-		}
-
-		return nil, err
-	}
-
-	c.cli = cli
 	c.lastErr = nil
-	c.setState(ConnConnected)
-
-	return cli, nil
+	c.setState(ConnUnknown)
 }
 
 // Close tears down the connection if one is open. Idempotent.
@@ -143,6 +164,87 @@ func (c *Client) Close() error {
 	c.cli = nil
 
 	return err
+}
+
+// get is Get; explicit marks a dial the user asked for (Up), which
+// autoconnect does not gate.
+func (c *Client) get(ctx context.Context, explicit bool) (*ssh.Client, error) {
+	queued := time.Now()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.held.Load() {
+		return nil, ErrDisconnected
+	}
+
+	if c.cli != nil {
+		if _, _, err := c.cli.SendRequest("keepalive@openssh.com", true, nil); err == nil {
+			c.setState(ConnConnected)
+			return c.cli, nil
+		}
+
+		_ = c.cli.Close()
+		c.cli = nil
+		c.setState(ConnDisconnected)
+	}
+
+	if !explicit && c.manualOnly.Load() {
+		return nil, ErrDisconnected
+	}
+
+	// A dial that failed while this call waited on mu has already answered
+	// it. Redialing would stack another full timeout per queued connection.
+	if c.lastErr != nil && c.lastErrAt.After(queued) {
+		return nil, c.lastErr
+	}
+
+	dctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if !c.setAbort(cancel) {
+		return nil, ErrDisconnected
+	}
+	defer c.setAbort(nil)
+
+	// Published before the dial so an observer (the menu bar) can show the
+	// attempt while it is in flight.
+	c.setState(ConnConnecting)
+
+	cli, err := c.dial(dctx)
+	if err != nil {
+		c.setState(ConnDisconnected)
+
+		// A cancelled caller (or a Down) says nothing about the upstream,
+		// so its error must not be handed to the calls queued behind it.
+		if dctx.Err() == nil {
+			c.lastErr, c.lastErrAt = err, time.Now()
+		}
+
+		return nil, err
+	}
+
+	c.cli = cli
+	c.lastErr = nil
+	c.setState(ConnConnected)
+
+	return cli, nil
+}
+
+// setAbort publishes the cancel func of the dial about to run, or clears it
+// with nil. It reports false when Down got there first; checking held under
+// abortMu means a Down either sees this dial's cancel or is seen by it.
+func (c *Client) setAbort(cancel context.CancelFunc) bool {
+	c.abortMu.Lock()
+	defer c.abortMu.Unlock()
+
+	if cancel != nil && c.held.Load() {
+		return false
+	}
+
+	c.abort = cancel
+
+	return true
 }
 
 func (c *Client) setState(s ConnState) {

@@ -41,8 +41,8 @@ func TestLookup_PrefersXDGWhenBothExist(t *testing.T) {
 	dotPath := filepath.Join(home, ".dockprox.yaml")
 
 	require.NoError(t, os.MkdirAll(filepath.Dir(xdgPath), 0o755))
-	require.NoError(t, os.WriteFile(xdgPath, []byte("listen: 127.0.0.1:1\n"), 0o600))
-	require.NoError(t, os.WriteFile(dotPath, []byte("listen: 127.0.0.1:2\n"), 0o600))
+	require.NoError(t, os.WriteFile(xdgPath, []byte("version: 1\nlisten: 127.0.0.1:1\n"), 0o600))
+	require.NoError(t, os.WriteFile(dotPath, []byte("version: 1\nlisten: 127.0.0.1:2\n"), 0o600))
 
 	path, found := menubar.Lookup()
 	require.True(t, found)
@@ -55,7 +55,7 @@ func TestLookup_FallsBackToDotfile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-missing"))
 
 	dotPath := filepath.Join(home, ".dockprox.yaml")
-	require.NoError(t, os.WriteFile(dotPath, []byte("listen: 127.0.0.1:2\n"), 0o600))
+	require.NoError(t, os.WriteFile(dotPath, []byte("version: 1\nlisten: 127.0.0.1:2\n"), 0o600))
 
 	path, found := menubar.Lookup()
 	require.True(t, found)
@@ -106,7 +106,7 @@ func TestResolve_LookupHit(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 
 	dotPath := filepath.Join(home, ".dockprox.yaml")
-	require.NoError(t, os.WriteFile(dotPath, []byte("listen: 127.0.0.1:2\n"), 0o600))
+	require.NoError(t, os.WriteFile(dotPath, []byte("version: 1\nlisten: 127.0.0.1:2\n"), 0o600))
 
 	path, err := menubar.Resolve()
 	require.NoError(t, err)
