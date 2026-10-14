@@ -1,7 +1,12 @@
 package config
 
+// Version is the config format version this build accepts. Every config
+// file must declare it as `version: 1`.
+const Version = 1
+
 // Config is the top-level dockprox configuration.
 type Config struct {
+	Version   int                 `json:"version"           yaml:"version"           jsonschema:"enum=1,description=config format version"`
 	Listen    string              `json:"listen"            yaml:"listen"            jsonschema:"description=local proxy listen address (host:port)"`
 	LogLevel  string              `json:"logLevel"          yaml:"logLevel"          jsonschema:"enum=debug,enum=info,enum=warn,enum=error,default=info"`
 	LogFile   string              `json:"logFile,omitempty" yaml:"logFile,omitempty" jsonschema:"description=log file path (default: OS cache dir)"`

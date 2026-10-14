@@ -11,6 +11,7 @@ ssh-keyscan -t ed25519 jumphost 2>/dev/null | ssh-keygen -lf - | awk '{print $2}
 Create `~/dockprox.yaml`:
 
 ```yaml
+version: 1
 listen: 127.0.0.1:8888
 upstreams:
   jump:
@@ -69,6 +70,7 @@ This is how you reach several local k3d/kind clusters that share one
 wildcard domain but cannot all bind `:443`:
 
 ```yaml
+version: 1
 listen: 127.0.0.1:1030
 upstreams:
   cluster-a: { type: forward, addr: 127.0.0.1:10310 }

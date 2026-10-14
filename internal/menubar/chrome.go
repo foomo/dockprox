@@ -81,7 +81,7 @@ func LaunchChrome(ctx context.Context, listenAddr string, cfg *config.Chrome) er
 	// contextcheck wants ctx threaded through, but buildChromeCommand must
 	// not carry it: see the comment above on why exec.CommandContext(ctx, ...)
 	// would wrongly turn the launch deadline into a lifetime cap on Chrome.
-	cmd := buildChromeCommand(listenAddr, dir, cfg) //nolint:contextcheck
+	cmd := buildChromeCommand(listenAddr, dir, cfg)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {

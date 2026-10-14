@@ -27,7 +27,7 @@ func writeTestConfig(t *testing.T, dir string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("listen: 127.0.0.1:0\nlog_level: error\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("version: 1\nlisten: 127.0.0.1:0\nlog_level: error\n"), 0o600))
 
 	return path
 }
@@ -68,7 +68,8 @@ func writeTunnelTestConfig(t *testing.T, dir, listen string) string {
 
 	key := writeTestKey(t, dir)
 
-	yaml := fmt.Sprintf(`listen: 127.0.0.1:0
+	yaml := fmt.Sprintf(`version: 1
+listen: 127.0.0.1:0
 log_level: error
 upstreams:
   jump:
@@ -99,7 +100,8 @@ func writeTwoTunnelTestConfig(t *testing.T, dir, firstListen, secondListen strin
 	key := writeTestKey(t, dir)
 	fp := fixedFingerprint()
 
-	yaml := fmt.Sprintf(`listen: 127.0.0.1:0
+	yaml := fmt.Sprintf(`version: 1
+listen: 127.0.0.1:0
 log_level: error
 upstreams:
   first:
@@ -455,7 +457,8 @@ func writeReachableTunnelConfig(t *testing.T, dir, sshAddr, hostFP, listen strin
 	host, portStr, err := net.SplitHostPort(sshAddr)
 	require.NoError(t, err)
 
-	yaml := fmt.Sprintf(`listen: 127.0.0.1:0
+	yaml := fmt.Sprintf(`version: 1
+listen: 127.0.0.1:0
 log_level: error
 upstreams:
   jump:
@@ -728,7 +731,8 @@ func TestController_TCPListenerForwards(t *testing.T) {
 	}()
 
 	listen := freePort(t)
-	yaml := fmt.Sprintf(`listen: 127.0.0.1:0
+	yaml := fmt.Sprintf(`version: 1
+listen: 127.0.0.1:0
 listeners:
   - type: tcp
     listen: %s

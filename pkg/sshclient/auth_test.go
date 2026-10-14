@@ -7,7 +7,6 @@ import (
 	"crypto/rsa"
 	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -23,14 +22,7 @@ import (
 func shortSock(t *testing.T) string {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "ag")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	return filepath.Join(dir, "a.sock")
+	return filepath.Join(t.TempDir(), "a.sock")
 }
 
 // startStalledAgent listens on a unix socket that accepts connections and

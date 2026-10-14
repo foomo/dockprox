@@ -98,6 +98,7 @@ Requires Go 1.26+.
 Create `dockprox.yaml`:
 
 ```yaml
+version: 1
 listen: 127.0.0.1:3128
 logLevel: info
 upstreams:

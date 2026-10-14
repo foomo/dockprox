@@ -4,6 +4,9 @@
 # documented here — see dockprox.schema.json for the authoritative schema
 # (regenerate via `make generate` after changing pkg/config types).
 
+# Config format version. Required; must be 1.
+version: 1
+
 # Local proxy listen address (host:port). Clients point their HTTP(S)
 # proxy settings here.
 listen: 127.0.0.1:8888

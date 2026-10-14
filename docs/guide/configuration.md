@@ -5,6 +5,7 @@
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/foomo/dockprox/main/dockprox.schema.json
+version: 1
 listen: 127.0.0.1:8888
 logLevel: info
 

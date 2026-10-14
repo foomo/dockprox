@@ -163,6 +163,7 @@ func TestValidate_SSHOK(t *testing.T) {
 
 func TestLoad_FromBytes(t *testing.T) {
 	yml := []byte(`
+version: 1
 listen: 127.0.0.1:9999
 logLevel: debug
 upstreams:
@@ -193,7 +194,7 @@ func TestLoad_FromFile(t *testing.T) {
 	dir := t.TempDir()
 
 	p := filepath.Join(dir, "d.yaml")
-	if err := os.WriteFile(p, []byte("listen: 127.0.0.1:1234\n"), 0o600); err != nil {
+	if err := os.WriteFile(p, []byte("version: 1\nlisten: 127.0.0.1:1234\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +209,7 @@ func TestLoad_FromFile(t *testing.T) {
 }
 
 func TestLoad_Reader(t *testing.T) {
-	c, err := config.Load(bytes.NewReader([]byte("listen: 127.0.0.1:7777\n")))
+	c, err := config.Load(bytes.NewReader([]byte("version: 1\nlisten: 127.0.0.1:7777\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestLoad_Reader(t *testing.T) {
 
 func TestLoad_AppliesDefaults(t *testing.T) {
 	// YAML omits both listen and logLevel; defaults should fill them.
-	c, err := config.LoadBytes([]byte("rules: []\n"))
+	c, err := config.LoadBytes([]byte("version: 1\nrules: []\n"))
 	if err != nil {
 		t.Fatalf("LoadBytes: %v", err)
 	}
@@ -354,8 +355,34 @@ func TestValidate_Listeners(t *testing.T) {
 	}
 }
 
+func TestLoad_Version(t *testing.T) {
+	for _, tc := range []struct {
+		name, yml, msg string
+	}{
+		{"missing", "listen: 127.0.0.1:8888\n", "version: required"},
+		{"unsupported", "version: 2\n", "version: unsupported 2"},
+		{"ok", "version: 1\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := config.LoadBytes([]byte(tc.yml))
+			if tc.msg == "" {
+				if err != nil {
+					t.Fatalf("err=%v", err)
+				}
+
+				return
+			}
+
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err=%v want substring %q", err, tc.msg)
+			}
+		})
+	}
+}
+
 func TestLoad_RejectsRemovedSocks5Listen(t *testing.T) {
 	_, err := config.LoadBytes([]byte(`
+version: 1
 upstreams:
   j:
     type: ssh

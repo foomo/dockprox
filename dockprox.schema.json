@@ -21,6 +21,13 @@
     },
     "Config": {
       "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ],
+          "description": "config format version"
+        },
         "listen": {
           "type": "string",
           "description": "local proxy listen address (host:port)"
@@ -64,6 +71,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "version",
         "listen",
         "logLevel",
         "upstreams",
