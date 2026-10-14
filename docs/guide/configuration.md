@@ -27,7 +27,7 @@ upstreams:
     port: 22                    # optional, default 22
     user: deploy                # optional, default: current OS user
     keyFile: ~/.ssh/id_ed25519  # key auth; or identityAgent, or both
-    keyFilePassphrase: ""       # optional, for an encrypted keyFile
+    keyFilePassphrase: ""       # optional, for an encrypted keyFile; accepts a secret reference
     identityAgent: SSH_AUTH_SOCK # agent auth: this sentinel, or a socket path
     hostKey: "SHA256:..."       # pinned fingerprint; falls back to ~/.ssh/known_hosts
     via: vpn                    # optional: dial the bastion through another upstream
@@ -38,7 +38,7 @@ upstreams:
     protocol: f5                # f5 (default) | anyconnect | nc | gp | pulse | fortinet | array
     auth:                       # required: username; password sent on stdin
       username: u
-      password: p
+      password: op://Work/VPN/password # secret reference, see below
     serverCert: pin-sha256:...  # optional
 
   cluster-a:
@@ -58,6 +58,24 @@ rules:
   - match: "*.azurecr.io"     # exact host or *.suffix wildcard
     upstream: jump
 ```
+
+## Secrets
+
+`auth.username`, `auth.password` and `keyFilePassphrase` take a literal or a
+secret reference, resolved on first use and cached until dockprox exits:
+
+| Value | Resolved by |
+|---|---|
+| `op://Vault/Item/field` | 1Password CLI: `op read` (unlocks via the desktop app) |
+| `keychain://service/account` | macOS Keychain: `security find-generic-password -w` |
+| `cmd:<shell>` | stdout of `/bin/sh -c <shell>`, e.g. `cmd:pass show vpn` |
+
+The tool a reference needs must be installed, see
+[Optional dependencies](./installation.md#optional-dependencies); a missing
+one fails at startup. A trailing newline is stripped. `/opt/homebrew/bin` and `/usr/local/bin` are
+added to `PATH`, so `op` is found when the menu bar app is launched from
+Finder. A literal that starts with a prefix above can be written as
+`cmd:printf %s '...'`.
 
 ## Flags
 

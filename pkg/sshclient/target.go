@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
@@ -82,7 +83,7 @@ func (t *Target) Addr() string {
 // Network errors are deliberately deferred to first use.
 func (t *Target) Validate() error {
 	if t.KeyFile != "" {
-		if _, err := t.keySigner(); err != nil {
+		if _, err := t.keySigner(context.Background()); err != nil {
 			return err
 		}
 	}
@@ -107,14 +108,20 @@ func (t *Target) Validate() error {
 
 // keySigner reads and parses KeyFile. The distinct passphrase error is the
 // one users hit most, so it names the file and the remedy.
-func (t *Target) keySigner() (ssh.Signer, error) {
+func (t *Target) keySigner(ctx context.Context) (ssh.Signer, error) {
 	pem, err := os.ReadFile(t.KeyFile)
 	if err != nil {
 		return nil, errors.Wrap(err, "keyFile")
 	}
 
 	if t.KeyFilePassphrase != "" {
-		signer, err := ssh.ParsePrivateKeyWithPassphrase(pem, []byte(t.KeyFilePassphrase))
+		passphrase, err := secret.Resolve(ctx, t.KeyFilePassphrase)
+		if err != nil {
+			return nil, errors.Wrap(err, "keyFilePassphrase")
+		}
+
+		signer, err := ssh.ParsePrivateKeyWithPassphrase(pem, []byte(passphrase))
+
 		return signer, errors.Wrapf(err, "keyFile %s", t.KeyFile)
 	}
 

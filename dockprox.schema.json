@@ -177,7 +177,7 @@
         },
         "keyFilePassphrase": {
           "type": "string",
-          "description": "ssh: passphrase for an encrypted keyFile"
+          "description": "ssh: passphrase for an encrypted keyFile; literal or secret reference (op://... | keychain://service/account | cmd:...)"
         },
         "identityAgent": {
           "type": "string",
@@ -222,10 +222,12 @@
     "UpstreamAuth": {
       "properties": {
         "username": {
-          "type": "string"
+          "type": "string",
+          "description": "literal or secret reference (op://... | keychain://service/account | cmd:...)"
         },
         "password": {
-          "type": "string"
+          "type": "string",
+          "description": "literal or secret reference (op://... | keychain://service/account | cmd:...)"
         }
       },
       "additionalProperties": false,

@@ -115,7 +115,7 @@ func tunnelListener(t *testing.T, ctx context.Context, sshAddr, hostFP, keyFile 
 		t.Fatal(err)
 	}
 
-	d, err := upstream.NewSSH("bastion", config.Upstream{
+	d, err := upstream.NewSSH("bastion", config.Upstream{ //nolint:contextcheck // NewSSH validates at startup without a ctx
 		Type: config.UpstreamSSH, Host: host, Port: port,
 		User: "tester", KeyFile: keyFile, HostKey: hostFP,
 	}, nil)

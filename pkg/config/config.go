@@ -50,7 +50,7 @@ type Upstream struct {
 	Port              int    `json:"port,omitempty"              yaml:"port,omitempty"              jsonschema:"description=ssh: port (default 22)"`
 	User              string `json:"user,omitempty"              yaml:"user,omitempty"              jsonschema:"description=ssh: login user (default: current OS user)"`
 	KeyFile           string `json:"keyFile,omitempty"           yaml:"keyFile,omitempty"           jsonschema:"description=ssh: private key path"`
-	KeyFilePassphrase string `json:"keyFilePassphrase,omitempty" yaml:"keyFilePassphrase,omitempty" jsonschema:"description=ssh: passphrase for an encrypted keyFile"`
+	KeyFilePassphrase string `json:"keyFilePassphrase,omitempty" yaml:"keyFilePassphrase,omitempty" jsonschema:"description=ssh: passphrase for an encrypted keyFile; literal or secret reference (op://... | keychain://service/account | cmd:...)"`
 	IdentityAgent     string `json:"identityAgent,omitempty"     yaml:"identityAgent,omitempty"     jsonschema:"description=ssh: SSH_AUTH_SOCK or an agent socket path"`
 	HostKey           string `json:"hostKey,omitempty"           yaml:"hostKey,omitempty"           jsonschema:"description=ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"`
 	Via               string `json:"via,omitempty"               yaml:"via,omitempty"               jsonschema:"description=ssh: name of a non-ssh upstream to dial the bastion through"`
@@ -63,10 +63,11 @@ type Upstream struct {
 }
 
 // UpstreamAuth carries optional username/password for SOCKS5 (RFC 1929) or
-// HTTP Basic auth on the upstream CONNECT request.
+// HTTP Basic auth on the upstream CONNECT request, or the openconnect
+// login. Either may be a secret reference (see package secret).
 type UpstreamAuth struct {
-	Username string `json:"username" yaml:"username"`
-	Password string `json:"password" yaml:"password"`
+	Username string `json:"username" yaml:"username" jsonschema:"description=literal or secret reference (op://... | keychain://service/account | cmd:...)"`
+	Password string `json:"password" yaml:"password" jsonschema:"description=literal or secret reference (op://... | keychain://service/account | cmd:...)"`
 }
 
 // UpstreamTLS configures the TLS dial to an HTTPS upstream proxy. It does

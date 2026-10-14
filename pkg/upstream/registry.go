@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/pkg/errors"
 )
 
@@ -67,6 +68,19 @@ func (r *Registry) Get(name string) (Dialer, bool) {
 func (r *Registry) Direct() Dialer { return r.direct }
 
 func (r *Registry) build(name string, u config.Upstream) (Dialer, error) {
+	// Secrets resolve lazily; fail at startup at least when the tool for
+	// one is missing.
+	refs := []string{u.KeyFilePassphrase}
+	if u.Auth != nil {
+		refs = append(refs, u.Auth.Username, u.Auth.Password)
+	}
+
+	for _, ref := range refs {
+		if err := secret.Check(ref); err != nil {
+			return nil, err
+		}
+	}
+
 	switch u.Type {
 	case config.UpstreamDirect:
 		return NewDirect(name), nil

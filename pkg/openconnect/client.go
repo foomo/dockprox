@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/pkg/errors"
 )
@@ -41,6 +42,7 @@ type Client struct {
 	openconnect string
 	ocproxy     string
 	args        []string
+	username    string
 	password    string
 
 	ctx    context.Context //nolint:containedctx // cancelled by Close to abort an in-flight start
@@ -95,7 +97,7 @@ func New(u config.Upstream) (*Client, error) {
 		protocol = defaultProtocol
 	}
 
-	args := []string{"--protocol", protocol, "--user", u.Auth.Username, "--passwd-on-stdin", "--non-inter"}
+	args := []string{"--protocol", protocol, "--passwd-on-stdin", "--non-inter"}
 	if u.ServerCert != "" {
 		args = append(args, "--servercert", u.ServerCert)
 	}
@@ -106,6 +108,7 @@ func New(u config.Upstream) (*Client, error) {
 		openconnect: oc,
 		ocproxy:     ocp,
 		args:        append(args, u.Server),
+		username:    u.Auth.Username,
 		password:    u.Auth.Password,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -266,6 +269,18 @@ func (c *Client) setAbort(cancel context.CancelFunc) bool {
 }
 
 func (c *Client) start(ctx context.Context) (*process, error) {
+	// Resolved per start, not in New: a locked password manager must not
+	// fail startup, and its unlock prompt belongs to the connect.
+	username, err := secret.Resolve(ctx, c.username)
+	if err != nil {
+		return nil, errors.Wrap(err, "username")
+	}
+
+	password, err := secret.Resolve(ctx, c.password)
+	if err != nil {
+		return nil, errors.Wrap(err, "password")
+	}
+
 	port, err := freePort(ctx)
 	if err != nil {
 		return nil, err
@@ -276,10 +291,10 @@ func (c *Client) start(ctx context.Context) (*process, error) {
 
 	out := &tail{}
 	// Bound to c.ctx, not ctx: the VPN outlives the call that started it.
-	cmd := exec.CommandContext(c.ctx, c.openconnect, append([]string{"--script-tun", "--script", script}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
+	cmd := exec.CommandContext(c.ctx, c.openconnect, append([]string{"--script-tun", "--script", script, "--user", username}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = stopTimeout
-	cmd.Stdin = strings.NewReader(c.password + "\n")
+	cmd.Stdin = strings.NewReader(password + "\n")
 	cmd.Stdout = out
 	cmd.Stderr = out
 
