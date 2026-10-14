@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/foomo/dockprox/pkg/upstream"
 )
 
@@ -65,6 +66,10 @@ func TestSocks5Dialer_Auth_OK(t *testing.T) {
 }
 
 func TestSocks5Dialer_Auth_SecretRef(t *testing.T) {
+	prev := secret.Default()
+	secret.SetDefault(secret.New(secret.WithCmd()))
+	t.Cleanup(func() { secret.SetDefault(prev) })
+
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer backend.Close()
 

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/internal/menubar"
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/secret"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -27,6 +28,10 @@ func main() {
 }
 
 func run(cfgPath string) error {
+	// Config is the user's own file, so cmd: references are trusted. Launched
+	// from Finder, PATH lacks the Homebrew prefixes where op lives.
+	secret.SetDefault(secret.New(secret.WithCmd(), secret.WithSearchDirs("/opt/homebrew/bin", "/usr/local/bin")))
+
 	if cfgPath == "" {
 		resolved, err := menubar.Resolve()
 		if err != nil {
