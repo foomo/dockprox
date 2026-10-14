@@ -74,6 +74,7 @@ Logs are written to `logFile` if set in the config, otherwise to the OS cache di
 | **Start**                   | Start the in-process proxy with the resolved config.                                                                                                                                              |
 | **Stop**                    | Stop the running proxy.                                                                                                                                                                           |
 | **Restart**                 | Stop, reload the config from disk, and start again. Disabled — and the tray icon dims — while a restart is in flight.                                                                             |
+| *(VPN rows)*                | One row per `openconnect` upstream, e.g. `◉ vpn: connected`. Click a disconnected VPN (`○`, `⚠︎`) to connect it, or a connected / connecting one (`◉`, `⊙`) to disconnect — see [VPN connection](#vpn-connection). |
 | *(tunnel rows)*             | One row per SSH upstream with a `socks5Listen`, e.g. `◉ bastion: 127.0.0.1:1080`. Click a listening tunnel (`◉`) to stop it, or a stopped one (`○`) to start it, independently of the main proxy. A listening tunnel has a read-only row below it with its SSH connection state — see [Tunnel connection](#tunnel-connection). |
 | *(forward rows)*            | One row per `forward` upstream with its fixed `addr`, e.g. `◉ staging: 127.0.0.1:8443`. Read-only — see [Forward status](#forward-status).                                                        |
 | **Open Chrome**             | Launch an isolated Chrome instance pointed at the proxy (see [Isolated Chrome](#isolated-chrome)). Only enabled while the proxy is running.                                                       |
@@ -117,6 +118,20 @@ tunnel shows `☎︎`, open the 1Password menu and select **SSH request waiting*
 
 1Password remembers the approval for dockprox until it locks or quits, or for the time set under **Settings → Developer
 → Remember key approval**. Checking **Approve for all applications** in the prompt covers dockprox too.
+
+## VPN connection
+
+| Glyph | Meaning |
+|-------|---------|
+| `○`   | Disconnected: never started, or disconnected from the menu. |
+| `⊙`   | Connecting; approve the MFA prompt on your device. Click to abort. |
+| `⚠︎`   | The last connect failed, or the VPN dropped. See the log for openconnect's output. |
+| `◉`   | Connected. |
+
+A VPN also connects on its own when a proxied request or a tunnel needs
+it, unless you disconnected it from the menu: then it stays down, and
+requests through it fail, until you click it again. That way a stray
+request never sends you an unexpected MFA prompt.
 
 ## Forward status
 

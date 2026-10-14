@@ -15,12 +15,14 @@ import (
 type SSHDialer struct {
 	name string
 	cli  *sshclient.Client
+	via  Dialer
 }
 
 // NewSSH returns an SSHDialer for the given ssh upstream. The target is
 // validated here — an unreadable key or a missing agent socket fails at
-// startup rather than on first use.
-func NewSSH(name string, u config.Upstream) (*SSHDialer, error) {
+// startup rather than on first use. A non-nil via carries the TCP
+// connection to the bastion, e.g. through a VPN.
+func NewSSH(name string, u config.Upstream, via Dialer) (*SSHDialer, error) {
 	t, err := sshclient.New(u)
 	if err != nil {
 		return nil, err
@@ -30,7 +32,11 @@ func NewSSH(name string, u config.Upstream) (*SSHDialer, error) {
 		return nil, err
 	}
 
-	return &SSHDialer{name: name, cli: sshclient.NewClient(t)}, nil
+	if via != nil {
+		t.Dial = via.Dial
+	}
+
+	return &SSHDialer{name: name, cli: sshclient.NewClient(t), via: via}, nil
 }
 
 // Name implements Dialer.
@@ -38,6 +44,10 @@ func (d *SSHDialer) Name() string { return d.name }
 
 // Dial implements Dialer.
 func (d *SSHDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error) {
+	if err := d.connectVia(ctx); err != nil {
+		return nil, err
+	}
+
 	cli, err := d.cli.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -62,6 +72,10 @@ func (d *SSHDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error)
 func (d *SSHDialer) Connect(ctx context.Context) error {
 	d.cli.MarkConnecting()
 
+	if err := d.connectVia(ctx); err != nil {
+		return err
+	}
+
 	_, err := d.cli.Get(ctx)
 
 	return err
@@ -77,3 +91,16 @@ func (d *SSHDialer) State() sshclient.ConnState { return d.cli.State() }
 // OnStateChange registers fn to run whenever State changes. See
 // sshclient.Client.OnStateChange for the calling constraints.
 func (d *SSHDialer) OnStateChange(fn func()) { d.cli.OnStateChange(fn) }
+
+// connectVia brings up a via upstream that has its own connection, such as
+// a VPN, before the SSH dial starts: that can take as long as an MFA
+// approval, which the SSH handshake timeout must not cover.
+func (d *SSHDialer) connectVia(ctx context.Context) error {
+	if c, ok := d.via.(interface {
+		Connect(ctx context.Context) error
+	}); ok {
+		return errors.Wrapf(c.Connect(ctx), "via %s", d.via.Name())
+	}
+
+	return nil
+}

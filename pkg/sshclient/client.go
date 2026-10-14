@@ -14,6 +14,10 @@ import (
 const (
 	// handshakeTimeout bounds the TCP dial and SSH handshake.
 	handshakeTimeout = 15 * time.Second
+	// viaHandshakeTimeout replaces handshakeTimeout when Target.Dial routes
+	// the connection through another upstream. The first connection through
+	// a freshly started VPN can take ~20s (observed with F5 + ocproxy).
+	viaHandshakeTimeout = 45 * time.Second
 	// approvalTimeout replaces handshakeTimeout while the agent holds a sign
 	// request, e.g. behind a 1Password prompt that is suppressed because
 	// dockprox is never the foreground app. Keep it under sshd's default
@@ -162,7 +166,12 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	// during the handshake, so an agent that accepts the connection and
 	// then stalls would otherwise hang here with no bound at all, holding
 	// c.mu and queueing every other connection through this upstream.
-	att := newAttempt(handshakeTimeout, approvalTimeout)
+	timeout := handshakeTimeout
+	if c.target.Dial != nil {
+		timeout = viaHandshakeTimeout
+	}
+
+	att := newAttempt(timeout, approvalTimeout)
 	att.onSign = func(pending bool) {
 		if pending {
 			c.setState(ConnAwaitingApproval)
@@ -176,7 +185,7 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	stop := context.AfterFunc(ctx, att.abort)
 	defer stop()
 
-	dialCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	methods, cleanup, err := c.target.authMethods(dialCtx, att)
@@ -187,7 +196,13 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 
 	addr := c.target.Addr()
 
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
+	var conn net.Conn
+	if c.target.Dial != nil {
+		conn, err = c.target.Dial(dialCtx, addr)
+	} else {
+		conn, err = (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
+	}
+
 	if err != nil {
 		return nil, errors.Wrapf(err, "dial ssh %s", addr)
 	}
@@ -198,7 +213,7 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 		User:            c.target.User,
 		Auth:            methods,
 		HostKeyCallback: hkc,
-		Timeout:         handshakeTimeout,
+		Timeout:         timeout,
 	})
 	if err != nil {
 		_ = conn.Close()

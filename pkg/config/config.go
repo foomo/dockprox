@@ -19,7 +19,7 @@ type Chrome struct {
 
 // Upstream defines a named proxy upstream that rules can reference.
 type Upstream struct {
-	Type string        `json:"type"           yaml:"type"           jsonschema:"enum=socks5,enum=http,enum=direct,enum=ssh,enum=forward"`
+	Type string        `json:"type"           yaml:"type"           jsonschema:"enum=socks5,enum=http,enum=direct,enum=ssh,enum=forward,enum=openconnect"`
 	Addr string        `json:"addr,omitempty" yaml:"addr,omitempty" jsonschema:"description=host:port for socks5; fixed dial target for forward"`
 	URL  string        `json:"url,omitempty"  yaml:"url,omitempty"  jsonschema:"description=URL for http upstreams"`
 	DNS  string        `json:"dns,omitempty"  yaml:"dns,omitempty"  jsonschema:"enum=local,enum=remote,default=local"`
@@ -35,6 +35,13 @@ type Upstream struct {
 	IdentityAgent     string `json:"identityAgent,omitempty"     yaml:"identityAgent,omitempty"     jsonschema:"description=ssh: SSH_AUTH_SOCK or an agent socket path"`
 	HostKey           string `json:"hostKey,omitempty"           yaml:"hostKey,omitempty"           jsonschema:"description=ssh: pinned SHA256:... host key fingerprint; falls back to ~/.ssh/known_hosts"`
 	Socks5Listen      string `json:"socks5Listen,omitempty"      yaml:"socks5Listen,omitempty"      jsonschema:"description=ssh: local SOCKS5 listen address (host:port)"`
+	Via               string `json:"via,omitempty"               yaml:"via,omitempty"               jsonschema:"description=ssh: name of a non-ssh upstream to dial the bastion through"`
+
+	// OpenConnect VPN fields; valid only when Type is "openconnect". Login
+	// credentials come from Auth.
+	Server     string `json:"server,omitempty"     yaml:"server,omitempty"     jsonschema:"description=openconnect: VPN gateway URL"`
+	Protocol   string `json:"protocol,omitempty"   yaml:"protocol,omitempty"   jsonschema:"enum=f5,enum=anyconnect,enum=nc,enum=gp,enum=pulse,enum=fortinet,enum=array,default=f5"`
+	ServerCert string `json:"serverCert,omitempty" yaml:"serverCert,omitempty" jsonschema:"description=openconnect: pinned server certificate (pin-sha256:...), passed as --servercert"`
 }
 
 // UpstreamAuth carries optional username/password for SOCKS5 (RFC 1929) or

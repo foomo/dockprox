@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/charmbracelet/log"
@@ -117,7 +118,7 @@ func tunnelListener(t *testing.T, ctx context.Context, sshAddr, hostFP, keyFile 
 	d, err := upstream.NewSSH("bastion", config.Upstream{
 		Type: config.UpstreamSSH, Host: host, Port: port,
 		User: "tester", KeyFile: keyFile, HostKey: hostFP,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,4 +213,60 @@ func TestSSHTunnel_ReconnectsAfterDrop(t *testing.T) {
 	kill()
 
 	roundTrip(t, t.Context(), addr, echoAddr, "second")
+}
+
+// viaDialer records how the bastion was reached and dials it directly.
+type viaDialer struct {
+	connects, dials atomic.Int32
+	dialed          atomic.Value
+}
+
+func (v *viaDialer) Name() string { return "via" }
+
+func (v *viaDialer) Connect(context.Context) error {
+	v.connects.Add(1)
+	return nil
+}
+
+func (v *viaDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error) {
+	v.dials.Add(1)
+	v.dialed.Store(hostPort)
+
+	return (&net.Dialer{}).DialContext(ctx, "tcp", hostPort)
+}
+
+func TestSSHTunnel_Via(t *testing.T) {
+	sshAddr, hostFP, _ := startSSHServer(t)
+	echoAddr := echoServer(t)
+	key := writeTestKey(t)
+
+	host, portStr, _ := net.SplitHostPort(sshAddr)
+	port, _ := strconv.Atoi(portStr)
+
+	via := &viaDialer{}
+
+	d, err := upstream.NewSSH("bastion", config.Upstream{
+		Type: config.UpstreamSSH, Host: host, Port: port,
+		User: "tester", KeyFile: key, HostKey: hostFP,
+	}, via)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = d.Close() })
+
+	c, err := d.Dial(t.Context(), echoAddr)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+
+	_ = c.Close()
+
+	if via.connects.Load() == 0 {
+		t.Fatal("via not connected before the ssh dial")
+	}
+
+	if got := via.dialed.Load(); via.dials.Load() != 1 || got != sshAddr {
+		t.Fatalf("via dials=%d last=%v, want 1 to %s", via.dials.Load(), got, sshAddr)
+	}
 }

@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"context"
 	"net"
 	"os"
 	"os/user"
@@ -26,6 +27,9 @@ type Target struct {
 	KeyFilePassphrase string
 	IdentityAgent     string
 	HostKey           string
+	// Dial, when set, replaces the direct TCP dial to Addr, e.g. to reach
+	// the bastion through a VPN.
+	Dial func(ctx context.Context, hostPort string) (net.Conn, error)
 }
 
 // New builds a Target from an ssh upstream, applying defaults. It does no

@@ -243,3 +243,85 @@ func TestLoad_AppliesDefaults(t *testing.T) {
 		t.Fatalf("logLevel=%q, want default", c.LogLevel)
 	}
 }
+
+func ocUp(mut func(*config.Upstream)) config.Upstream {
+	u := config.Upstream{
+		Type: "openconnect", Server: "https://vpn.example.com",
+		Auth: &config.UpstreamAuth{Username: "u", Password: "p"},
+	}
+	if mut != nil {
+		mut(&u)
+	}
+
+	return u
+}
+
+func TestValidate_OpenConnectOK(t *testing.T) {
+	good := []struct {
+		name string
+		c    config.Config
+	}{
+		{"vpn referenced by rule", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(nil)},
+			config.Rule{Match: "*.internal", Upstream: "vpn"},
+		)},
+		{"ssh via vpn", cfgWith(map[string]config.Upstream{
+			"vpn": ocUp(func(u *config.Upstream) { u.Protocol = "f5"; u.ServerCert = "pin-sha256:abc" }),
+			"j":   sshUp(func(u *config.Upstream) { u.Via = "vpn"; u.Socks5Listen = "127.0.0.1:1080" }),
+		})},
+	}
+	for _, tc := range good {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.c.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_OpenConnectErrors(t *testing.T) {
+	rule := config.Rule{Match: "*.internal", Upstream: "vpn"}
+
+	bad := []struct {
+		name string
+		c    config.Config
+		msg  string
+	}{
+		{"no server", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(func(u *config.Upstream) { u.Server = "" })}, rule,
+		), "server"},
+		{"http server", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(func(u *config.Upstream) { u.Server = "http://vpn" })}, rule,
+		), "https"},
+		{"unknown protocol", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(func(u *config.Upstream) { u.Protocol = "ipsec" })}, rule,
+		), "protocol"},
+		{"no username", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(func(u *config.Upstream) { u.Auth = nil })}, rule,
+		), "auth.username"},
+		{"unreferenced", cfgWith(
+			map[string]config.Upstream{"vpn": ocUp(nil)},
+		), "unreferenced"},
+		{"server on socks5", cfgWith(
+			map[string]config.Upstream{"j": {Type: "socks5", Addr: "127.0.0.1:1", Server: "https://x"}},
+		), "server"},
+		{"via on socks5", cfgWith(
+			map[string]config.Upstream{"j": {Type: "socks5", Addr: "127.0.0.1:1", Via: "x"}},
+		), "via"},
+		{"via unknown", cfgWith(
+			map[string]config.Upstream{"j": sshUp(func(u *config.Upstream) { u.Via = "ghost"; u.Socks5Listen = "127.0.0.1:1080" })},
+		), "ghost"},
+		{"via ssh", cfgWith(map[string]config.Upstream{
+			"a": sshUp(func(u *config.Upstream) { u.Socks5Listen = "127.0.0.1:1080" }),
+			"b": sshUp(func(u *config.Upstream) { u.Via = "a"; u.Socks5Listen = "127.0.0.1:1081" }),
+		}), "chain"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.c.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err=%v want substring %q", err, tc.msg)
+			}
+		})
+	}
+}
