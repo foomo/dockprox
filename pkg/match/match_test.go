@@ -2,6 +2,7 @@ package match_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/foomo/dockprox/pkg/match"
@@ -68,6 +69,28 @@ func TestMatcher_NewValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzMatcher_First(f *testing.F) {
+	m, err := match.New([]match.Rule{
+		{Pattern: "*.azurecr.io", Upstream: "jump"},
+		{Pattern: "ghcr.io", Upstream: "jump"},
+		{Pattern: "::1", Upstream: "jump"},
+	}, map[string]struct{}{"jump": {}})
+	if err != nil {
+		f.Fatalf("New: %v", err)
+	}
+
+	for _, s := range []string{"ghcr.io", "foo.azurecr.io:443", "[::1]:443", "[::1", ":443", ""} {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, host string) {
+		r, ok := m.First(host)
+		if ok && !strings.Contains(strings.ToLower(host), strings.TrimPrefix(r.Pattern, "*")) {
+			t.Fatalf("host %q matched unrelated pattern %q", host, r.Pattern)
+		}
+	})
 }
 
 func ExampleMatcher_First() {
