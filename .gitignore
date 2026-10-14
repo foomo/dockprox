@@ -40,14 +40,13 @@ tmp/
 ## TypeScript
 *.tsbuildinfo
 
-### Golang
+## Golang
 /go.work
 /go.work.sum
 !.golangci.yaml
 !.goreleaser.yaml
 
-## Node ##
-!.npmrc
+## Node
 **/node_modules/
 
 ## Vitepress
@@ -56,5 +55,5 @@ docs/.vitepress/*
 !docs/.vitepress/theme/
 !docs/.vitepress/config.mts
 
-# binary
+## binary
 dockprox
