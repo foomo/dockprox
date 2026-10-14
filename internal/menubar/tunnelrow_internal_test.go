@@ -109,3 +109,36 @@ func TestConnRow_HiddenWhenStopped(t *testing.T) {
 		}
 	}
 }
+
+func TestVPNRow(t *testing.T) {
+	for _, tc := range []struct {
+		state       sshclient.ConnState
+		wantGlyph   string
+		wantConnect bool
+	}{
+		{sshclient.ConnUnknown, "○", true},
+		{sshclient.ConnConnecting, "⊙", false},
+		{sshclient.ConnConnected, "◉", false},
+		{sshclient.ConnDisconnected, "⚠︎", true},
+	} {
+		t.Run(tc.state.String(), func(t *testing.T) {
+			glyph, _, connect := vpnRow(VPNStatus{ConnState: tc.state})
+			if glyph != tc.wantGlyph || connect != tc.wantConnect {
+				t.Fatalf("vpnRow = %q, connect=%v; want %q, %v", glyph, connect, tc.wantGlyph, tc.wantConnect)
+			}
+		})
+	}
+}
+
+// TestVPNRow_GlyphAgreesWithAction pins that only an up or connecting row
+// disconnects on click, for every state.
+func TestVPNRow_GlyphAgreesWithAction(t *testing.T) {
+	for _, s := range allConnStates {
+		glyph, _, connect := vpnRow(VPNStatus{ConnState: s})
+
+		up := glyph == "◉" || glyph == "⊙"
+		if up == connect {
+			t.Fatalf("state %s: glyph %q but connect=%v", s, glyph, connect)
+		}
+	}
+}

@@ -10,7 +10,7 @@ logLevel: info
 
 upstreams:
   jump:
-    type: socks5        # socks5 | http | direct | ssh | forward
+    type: socks5        # socks5 | http | direct | ssh | forward | openconnect
     addr: 127.0.0.1:1080
     dns: remote         # remote (socks5h) | local
     auth:
@@ -30,6 +30,16 @@ upstreams:
     identityAgent: SSH_AUTH_SOCK # agent auth: this sentinel, or a socket path
     hostKey: "SHA256:..."       # pinned fingerprint; falls back to ~/.ssh/known_hosts
     socks5Listen: 127.0.0.1:1080 # optional: expose a local SOCKS5 port
+    via: vpn                    # optional: dial the bastion through another upstream
+
+  vpn:
+    type: openconnect
+    server: https://vpn.example.com # required
+    protocol: f5                # f5 (default) | anyconnect | nc | gp | pulse | fortinet | array
+    auth:                       # required: username; password sent on stdin
+      username: u
+      password: p
+    serverCert: pin-sha256:...  # optional
 
   cluster-a:
     type: forward
@@ -57,3 +67,4 @@ rules:
 ## See also
 
 - [SSH tunnels](./usage.md#ssh-tunnels)
+- [OpenConnect VPN](./usage.md#openconnect-vpn)

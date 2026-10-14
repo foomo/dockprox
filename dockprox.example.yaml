@@ -69,6 +69,21 @@ upstreams:
     #     | ssh-keygen -lf - | awk '{print $2}'
     hostKey: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     socks5Listen: 127.0.0.1:1080  # optional: expose a local SOCKS5 port
+    via: vpn                      # optional: dial the bastion through another (non-ssh) upstream
+
+  # OpenConnect VPN, run rootless: dockprox spawns
+  #   openconnect --script-tun --script "ocproxy -D <port>"
+  # on first use, so the VPN is reachable only through dockprox — no tun
+  # device, no system routes, no sudo. Requires `brew install openconnect
+  # ocproxy`. Connecting waits up to 90s for MFA (e.g. a push approval).
+  vpn:
+    type: openconnect
+    server: https://vpn.example.com # required, https://
+    protocol: f5                    # f5 (default) | anyconnect | nc | gp | pulse | fortinet | array
+    auth:                           # required: login user; password sent on stdin
+      username: user
+      password: pass
+    serverCert: pin-sha256:AAAA...  # optional: pin the gateway certificate (--servercert)
 
 # Host-matching rules, evaluated in order. match is either an exact
 # hostname or a leading "*." wildcard suffix. upstream must name an entry

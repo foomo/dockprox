@@ -65,6 +65,7 @@ func runServe(cmd *cobra.Command, f *serveFlags) error {
 	if err != nil {
 		return errors.Wrap(err, "registry")
 	}
+	defer reg.Close()
 
 	known := map[string]struct{}{}
 	for n := range cfg.Upstreams {

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
 	"github.com/foomo/dockprox/pkg/match"
+	"github.com/foomo/dockprox/pkg/openconnect"
 	"github.com/foomo/dockprox/pkg/proxy"
 	"github.com/foomo/dockprox/pkg/socks5server"
 	"github.com/foomo/dockprox/pkg/sshclient"
@@ -110,6 +111,7 @@ type Status struct {
 	LastError  error
 	Tunnels    []TunnelStatus
 	Forwards   []ForwardStatus
+	VPNs       []VPNStatus
 	// Chrome is the loaded config's chrome section, or nil when the
 	// controller is not running or the section is absent.
 	Chrome *config.Chrome
@@ -123,6 +125,14 @@ type ForwardStatus struct {
 	Name string
 	// Addr is the upstream's configured fixed dial target ("host:port").
 	Addr string
+}
+
+// VPNStatus describes one openconnect upstream's VPN connection.
+type VPNStatus struct {
+	Name string
+	// ConnState is the VPN process state. ConnUnknown means not connected:
+	// never started, or disconnected from the menu.
+	ConnState sshclient.ConnState
 }
 
 // TunnelStatus describes one ssh tunnel's SOCKS5 listener and SSH
@@ -299,6 +309,16 @@ func (c *ProxyController) Start() error {
 		}
 	}
 
+	// VPNs also start lazily from proxied requests, so repaint on every
+	// state change, not only on menu clicks.
+	for _, name := range vpnNames(cfg) {
+		if d, ok := reg.Get(name); ok {
+			if od, ok := d.(*upstream.OpenConnectDialer); ok {
+				od.OnStateChange(c.notify)
+			}
+		}
+	}
+
 	done := make(chan struct{})
 
 	c.mu.Lock()
@@ -322,6 +342,9 @@ func (c *ProxyController) Start() error {
 
 	go func() {
 		defer close(done)
+		// Every exit path cancels the tunnels too, so nothing dials through
+		// the registry anymore: drop SSH connections and stop VPN processes.
+		defer func() { _ = reg.Close() }()
 		defer func() {
 			if r := recover(); r != nil {
 				c.fail(errors.Errorf("proxy panic: %v", r))
@@ -562,6 +585,44 @@ func (c *ProxyController) Restart() error {
 	return c.Start()
 }
 
+// ConnectVPN brings the named VPN up in the background, undoing a
+// DisconnectVPN. It returns once the attempt has started: connecting waits
+// for MFA approval, which must not hold the menu busy. A failure is logged
+// and shows in the VPN's state.
+func (c *ProxyController) ConnectVPN(name string) error {
+	d, ctx, err := c.vpn(name)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		// Up publishes ConnConnecting through OnStateChange; the notify
+		// after it returns covers the outcome.
+		if err := d.Up(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, openconnect.ErrDisconnected) {
+			c.logger.Warn("connect vpn", "name", name, "err", err)
+		}
+
+		c.notify()
+	}()
+
+	return nil
+}
+
+// DisconnectVPN stops the named VPN, aborting a connect in flight, and
+// keeps it down until ConnectVPN: requests routed through it fail rather
+// than silently reconnecting and prompting for another approval.
+func (c *ProxyController) DisconnectVPN(name string) error {
+	d, _, err := c.vpn(name)
+	if err != nil {
+		return err
+	}
+
+	d.Down()
+	c.notify()
+
+	return nil
+}
+
 // serveTunnel runs h's listener in its own goroutine, using tctx (h's own
 // derived context) until it is cancelled (via StopTunnel or the
 // whole-controller Stop) or it errors unexpectedly. An unexpected error
@@ -683,6 +744,7 @@ func (c *ProxyController) statusLocked() Status {
 	if c.cfg != nil {
 		st.Chrome = c.cfg.Chrome
 		st.Forwards = forwardStatus(c.cfg)
+		st.VPNs = c.vpnStatusLocked()
 	}
 
 	return st
@@ -700,6 +762,60 @@ func forwardStatus(cfg *config.Config) []ForwardStatus {
 	}
 
 	return out
+}
+
+// vpnNames lists the config's "openconnect" upstreams, sorted by name so
+// the menu order is stable across rebuilds.
+func vpnNames(cfg *config.Config) []string {
+	var out []string
+
+	for _, name := range slices.Sorted(maps.Keys(cfg.Upstreams)) {
+		if cfg.Upstreams[name].Type == config.UpstreamOpenConnect {
+			out = append(out, name)
+		}
+	}
+
+	return out
+}
+
+// vpnStatusLocked builds the []VPNStatus snapshot. Callers must hold c.mu.
+func (c *ProxyController) vpnStatusLocked() []VPNStatus {
+	names := vpnNames(c.cfg)
+	out := make([]VPNStatus, 0, len(names))
+
+	for _, name := range names {
+		st := VPNStatus{Name: name}
+
+		if c.reg != nil {
+			if d, ok := c.reg.Get(name); ok {
+				if od, ok := d.(*upstream.OpenConnectDialer); ok {
+					st.ConnState = od.State()
+				}
+			}
+		}
+
+		out = append(out, st)
+	}
+
+	return out
+}
+
+// vpn returns the named VPN dialer and the running proxy's base context.
+func (c *ProxyController) vpn(name string) (*upstream.OpenConnectDialer, context.Context, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.state != StateRunning || c.reg == nil {
+		return nil, nil, errors.New("controller not running")
+	}
+
+	if d, ok := c.reg.Get(name); ok {
+		if od, ok := d.(*upstream.OpenConnectDialer); ok {
+			return od, c.baseCtx, nil
+		}
+	}
+
+	return nil, nil, errors.Errorf("vpn %q: unknown", name)
 }
 
 // tunnelStatusLocked builds the []TunnelStatus snapshot from c.tunnels.

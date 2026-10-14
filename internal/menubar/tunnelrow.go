@@ -61,3 +61,25 @@ func connRow(ts TunnelStatus) (label string, ok bool) { //nolint:nonamedreturns 
 
 	return "◎ ssh not connected", true
 }
+
+// vpnRow decides how one VPN's menu row is presented and what a click
+// does: connect when it is down, disconnect when it is up or connecting
+// (which aborts the attempt, e.g. an MFA push nobody will approve).
+//
+//	○  disconnected            (click connects)
+//	⊙  connecting, waiting for MFA approval  (click aborts)
+//	⚠︎  last attempt failed or the VPN dropped  (click connects)
+//	◉  connected               (click disconnects)
+func vpnRow(vs VPNStatus) (glyph, label string, connect bool) { //nolint:nonamedreturns // named for the doc comment's sake
+	switch vs.ConnState {
+	case sshclient.ConnConnected:
+		return "◉", "connected", false
+	case sshclient.ConnConnecting, sshclient.ConnAwaitingApproval:
+		return "⊙", "connecting (approve on your device)", false
+	case sshclient.ConnDisconnected:
+		return "⚠︎", "disconnected (failed)", true
+	case sshclient.ConnUnknown:
+	}
+
+	return "○", "disconnected", true
+}

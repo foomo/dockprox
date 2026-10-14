@@ -204,6 +204,34 @@ func (t *Tray) rebuildMenu() {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
 	}
 
+	// VPNs first, since tunnels may run through them: one row each, click
+	// to connect or disconnect — see vpnRow.
+	if len(snap.VPNs) > 0 {
+		menu.AddSeparator()
+
+		for _, vs := range snap.VPNs {
+			name := vs.Name
+			glyph, label, connect := vpnRow(vs)
+
+			item := menu.Add(fmt.Sprintf("%s %s: %s", glyph, name, label))
+			item.SetEnabled(snap.State == StateRunning)
+
+			if connect {
+				item.OnClick(func(_ *application.Context) {
+					t.runBusy("connect vpn "+name, func() error {
+						return t.ctrl.ConnectVPN(name)
+					})
+				})
+			} else {
+				item.OnClick(func(_ *application.Context) {
+					t.runBusy("disconnect vpn "+name, func() error {
+						return t.ctrl.DisconnectVPN(name)
+					})
+				})
+			}
+		}
+	}
+
 	// Tunnels: one glyph+name row each, click to start/stop that tunnel,
 	// followed by a read-only row for its SSH connection while listening.
 	if len(snap.Tunnels) > 0 {

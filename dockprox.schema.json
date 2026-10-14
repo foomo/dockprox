@@ -90,7 +90,8 @@
             "http",
             "direct",
             "ssh",
-            "forward"
+            "forward",
+            "openconnect"
           ]
         },
         "addr": {
@@ -146,6 +147,31 @@
         "socks5Listen": {
           "type": "string",
           "description": "ssh: local SOCKS5 listen address (host:port)"
+        },
+        "via": {
+          "type": "string",
+          "description": "ssh: name of a non-ssh upstream to dial the bastion through"
+        },
+        "server": {
+          "type": "string",
+          "description": "openconnect: VPN gateway URL"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "f5",
+            "anyconnect",
+            "nc",
+            "gp",
+            "pulse",
+            "fortinet",
+            "array"
+          ],
+          "default": "f5"
+        },
+        "serverCert": {
+          "type": "string",
+          "description": "openconnect: pinned server certificate (pin-sha256:...)"
         }
       },
       "additionalProperties": false,

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"maps"
 	"net"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -13,12 +14,16 @@ import (
 
 // Upstream type constants used by Upstream.Type.
 const (
-	UpstreamSocks5  = "socks5"
-	UpstreamHTTP    = "http"
-	UpstreamDirect  = "direct"
-	UpstreamSSH     = "ssh"
-	UpstreamForward = "forward"
+	UpstreamSocks5      = "socks5"
+	UpstreamHTTP        = "http"
+	UpstreamDirect      = "direct"
+	UpstreamSSH         = "ssh"
+	UpstreamForward     = "forward"
+	UpstreamOpenConnect = "openconnect"
 )
+
+// openConnectProtocols are the --protocol values openconnect accepts.
+var openConnectProtocols = []string{"f5", "anyconnect", "nc", "gp", "pulse", "fortinet", "array"}
 
 // IdentityAgentEnv is the sentinel identityAgent value meaning "read the
 // socket path from $SSH_AUTH_SOCK", matching OpenSSH's directive.
@@ -71,6 +76,24 @@ func (c *Config) Validate() error {
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
+		via := c.Upstreams[name].Via
+		if via == "" {
+			continue
+		}
+
+		target, ok := c.Upstreams[via]
+		if !ok {
+			return errors.Errorf("upstreams.%s.via: unknown upstream %q", name, via)
+		}
+
+		if target.Type == UpstreamSSH {
+			return errors.Errorf("upstreams.%s.via: cannot chain through ssh upstream %q", name, via)
+		}
+
+		referenced[via] = struct{}{}
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(c.Upstreams)) {
 		u := c.Upstreams[name]
 
 		if u.Socks5Listen != "" {
@@ -85,6 +108,12 @@ func (c *Config) Validate() error {
 		if u.Type == UpstreamSSH && u.Socks5Listen == "" {
 			if _, ok := referenced[name]; !ok {
 				return errors.Errorf("upstreams.%s: unreferenced ssh upstream with no socks5Listen", name)
+			}
+		}
+
+		if u.Type == UpstreamOpenConnect {
+			if _, ok := referenced[name]; !ok {
+				return errors.Errorf("upstreams.%s: unreferenced openconnect upstream", name)
 			}
 		}
 	}
@@ -121,12 +150,22 @@ func (u Upstream) validate() error {
 		if err := u.validateSSH(); err != nil {
 			return err
 		}
+	case UpstreamOpenConnect:
+		if err := u.validateOpenConnect(); err != nil {
+			return err
+		}
 	default:
 		return errors.Errorf("type: unknown %q", u.Type)
 	}
 
 	if u.Type != UpstreamSSH {
 		if err := u.rejectSSHFields(); err != nil {
+			return err
+		}
+	}
+
+	if u.Type != UpstreamOpenConnect {
+		if err := u.rejectOpenConnectFields(); err != nil {
 			return err
 		}
 	}
@@ -181,9 +220,54 @@ func (u Upstream) rejectSSHFields() error {
 		{"identityAgent", u.IdentityAgent != ""},
 		{"hostKey", u.HostKey != ""},
 		{"socks5Listen", u.Socks5Listen != ""},
+		{"via", u.Via != ""},
 	} {
 		if f.set {
 			return errors.Errorf("%s: only valid on type %q", f.name, UpstreamSSH)
+		}
+	}
+
+	return nil
+}
+
+func (u Upstream) validateOpenConnect() error {
+	if u.Server == "" {
+		return errors.New("server: required for openconnect")
+	}
+
+	parsed, err := url.Parse(u.Server)
+	if err != nil {
+		return errors.Wrap(err, "server")
+	}
+
+	if parsed.Scheme != "https" || parsed.Host == "" {
+		return errors.Errorf("server: expected https://host, got %q", u.Server)
+	}
+
+	if u.Protocol != "" && !slices.Contains(openConnectProtocols, u.Protocol) {
+		return errors.Errorf("protocol: unknown %q", u.Protocol)
+	}
+
+	if u.Auth == nil || u.Auth.Username == "" {
+		return errors.New("auth.username: required for openconnect")
+	}
+
+	return nil
+}
+
+// rejectOpenConnectFields fails loudly on openconnect-only fields set on
+// another upstream type.
+func (u Upstream) rejectOpenConnectFields() error {
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"server", u.Server != ""},
+		{"protocol", u.Protocol != ""},
+		{"serverCert", u.ServerCert != ""},
+	} {
+		if f.set {
+			return errors.Errorf("%s: only valid on type %q", f.name, UpstreamOpenConnect)
 		}
 	}
 
