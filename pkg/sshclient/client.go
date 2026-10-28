@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
@@ -25,18 +26,45 @@ const (
 	approvalTimeout = 60 * time.Second
 )
 
+// timing holds the watcher's knobs. A struct on the Client rather than
+// package variables, so a test sets its own without racing another's
+// watcher.
+type timing struct {
+	// heartbeat is how often an open connection that has read nothing is
+	// probed. A new login can take ~30s on some servers, so the connection
+	// is kept from idling out (VPN, NAT, sshd) and a dead one is found
+	// before a request has to wait on it.
+	heartbeat time.Duration
+	// probe bounds a probe. A conn whose path died silently (sleep/wake,
+	// VPN drop) never answers.
+	probe time.Duration
+	// stall replaces probe while a write to the connection is blocked. The
+	// path is then congested rather than idle, and a probe can only answer
+	// once it drains: TCP inside a TCP-only VPN (ocproxy over TLS) freezes
+	// for about a minute at a time under bulk uploads. Closing it then
+	// would kill every channel it carries and still wait for the same path.
+	stall time.Duration
+}
+
+var defaultTiming = timing{heartbeat: 15 * time.Second, probe: 5 * time.Second, stall: 2 * time.Minute}
+
 // Client holds a lazily-established SSH connection to a Target. The first
-// Dial through it performs the handshake; subsequent calls reuse the
-// connection after a keepalive probe, and reconnect when the probe fails.
+// use performs the handshake; later calls reuse the connection as long as
+// it is open, and reconnect once it is not.
 //
-// There is no supervisor goroutine and no backoff state: the mutex
-// collapses concurrent first-use into a single handshake, and the same
-// path serves reconnection after a sleep/wake.
+// Liveness is the watcher's job: each open connection has a goroutine that
+// keeps it alive, closes it when a probe fails and forgets it once it
+// closes, by either side. It never dials. There is no backoff state: the
+// mutex collapses concurrent first-use into a single handshake, and the
+// same path serves reconnection after a sleep/wake.
 type Client struct {
 	target *Target
+	timing timing
 
 	mu  sync.Mutex
 	cli *ssh.Client
+	// conn is the transport under cli; it records when cli last read.
+	conn *readConn
 	// lastErr is the outcome of the last failed dial and when it failed,
 	// so calls that queued on mu behind that dial can share its answer.
 	lastErr   error
@@ -67,7 +95,7 @@ var ErrDisconnected = errors.New("ssh: disconnected")
 
 // NewClient returns a Client for t. No network activity happens here.
 func NewClient(t *Target) *Client {
-	return &Client{target: t}
+	return &Client{target: t, timing: defaultTiming}
 }
 
 // State returns the last known connection state. Passive — it reflects the
@@ -109,10 +137,38 @@ func (c *Client) SetAutoconnect(on bool) {
 	c.manualOnly.Store(!on)
 }
 
-// Get returns a live *ssh.Client, connecting or reconnecting as needed
-// unless autoconnect is off.
+// Get returns the open *ssh.Client, connecting or reconnecting as needed
+// unless autoconnect is off. The connection is not probed: a dead one is
+// closed by its watcher within a heartbeat, or found by the first channel
+// open on it — see DialContext.
 func (c *Client) Get(ctx context.Context) (*ssh.Client, error) {
 	return c.get(ctx, false)
+}
+
+// DialContext opens addr as a channel on the connection, like
+// ssh.Client.DialContext, connecting as needed. A channel open that fails
+// for any reason other than the server refusing it means the connection
+// is gone (a path that died silently is noticed here before the watcher
+// probes it), so it is closed and the open is retried once on a new one.
+func (c *Client) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	for retry := false; ; retry = true {
+		cli, err := c.get(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+
+		conn, err := cli.DialContext(ctx, network, addr)
+		if err == nil {
+			return conn, nil
+		}
+
+		if errors.As(err, new(*ssh.OpenChannelError)) || retry || ctx.Err() != nil {
+			return nil, errors.Wrapf(err, "ssh dial %s", addr)
+		}
+
+		log.Debug("ssh channel open failed, redialing", "addr", c.target.Addr(), "err", err)
+		c.forget(cli)
+	}
 }
 
 // Up clears a Down and connects, blocking like Get, whether or not
@@ -166,6 +222,20 @@ func (c *Client) Close() error {
 	return err
 }
 
+// forget closes cli and, if it is still the current connection, drops it
+// so the next get dials.
+func (c *Client) forget(cli *ssh.Client) {
+	_ = cli.Close()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.cli == cli {
+		c.cli = nil
+		c.setState(ConnDisconnected)
+	}
+}
+
 // get is Get; explicit marks a dial the user asked for (Up), which
 // autoconnect does not gate.
 func (c *Client) get(ctx context.Context, explicit bool) (*ssh.Client, error) {
@@ -174,19 +244,16 @@ func (c *Client) get(ctx context.Context, explicit bool) (*ssh.Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	addr := c.target.Addr()
+	log.Debug("ssh get", "addr", addr, "wait", time.Since(queued))
+
 	if c.held.Load() {
 		return nil, ErrDisconnected
 	}
 
 	if c.cli != nil {
-		if _, _, err := c.cli.SendRequest("keepalive@openssh.com", true, nil); err == nil {
-			c.setState(ConnConnected)
-			return c.cli, nil
-		}
-
-		_ = c.cli.Close()
-		c.cli = nil
-		c.setState(ConnDisconnected)
+		c.setState(ConnConnected)
+		return c.cli, nil
 	}
 
 	if !explicit && c.manualOnly.Load() {
@@ -211,7 +278,10 @@ func (c *Client) get(ctx context.Context, explicit bool) (*ssh.Client, error) {
 	// attempt while it is in flight.
 	c.setState(ConnConnecting)
 
-	cli, err := c.dial(dctx)
+	start := time.Now()
+	cli, conn, err := c.dial(dctx)
+	log.Debug("ssh dial done", "addr", addr, "dur", time.Since(start), "err", err)
+
 	if err != nil {
 		c.setState(ConnDisconnected)
 
@@ -224,11 +294,96 @@ func (c *Client) get(ctx context.Context, explicit bool) (*ssh.Client, error) {
 		return nil, err
 	}
 
-	c.cli = cli
+	c.cli, c.conn = cli, conn
 	c.lastErr = nil
 	c.setState(ConnConnected)
 
+	go c.watch(cli, conn)
+
 	return cli, nil
+}
+
+// watch keeps cli alive until it closes, probing it whenever it has read
+// nothing for timing.heartbeat and closing it when a probe fails. Once cli
+// is closed, by either side or for any reason, it is logged and forgotten
+// so the next Get dials.
+func (c *Client) watch(cli *ssh.Client, conn *readConn) {
+	addr := c.target.Addr()
+	closed := make(chan struct{})
+
+	go func() {
+		defer close(closed)
+
+		err := cli.Wait()
+		log.Info("ssh closed", "addr", addr, "err", err)
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		if c.cli == cli {
+			c.cli = nil
+			c.setState(ConnDisconnected)
+		}
+	}()
+
+	t := time.NewTicker(c.timing.heartbeat)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-closed:
+			return
+		case <-t.C:
+		}
+
+		if time.Since(conn.lastRead()) < c.timing.heartbeat {
+			continue
+		}
+
+		if err := c.keepalive(cli, conn); err != nil {
+			log.Warn("ssh heartbeat", "addr", addr, "err", err)
+
+			_ = cli.Close()
+
+			return
+		}
+	}
+}
+
+// keepalive probes cli, failing after timing.probe, or up to timing.stall
+// while a write to conn stays blocked.
+// The caller closes cli on failure, which also unblocks the probe left
+// running.
+func (c *Client) keepalive(cli *ssh.Client, conn *readConn) error {
+	done := make(chan error, 1)
+
+	go func() {
+		_, _, err := cli.SendRequest("keepalive@openssh.com", true, nil)
+		done <- err
+	}()
+
+	stallDeadline := time.Now().Add(c.timing.stall)
+
+	t := time.NewTimer(c.timing.probe)
+	defer t.Stop()
+
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-t.C:
+		}
+
+		if conn.writing.Load() == 0 {
+			return errors.New("keepalive timeout")
+		}
+
+		if !time.Now().Before(stallDeadline) {
+			return errors.New("keepalive timeout: connection stalled")
+		}
+
+		t.Reset(time.Second)
+	}
 }
 
 // setAbort publishes the cancel func of the dial about to run, or clears it
@@ -257,10 +412,10 @@ func (c *Client) setState(s ConnState) {
 	}
 }
 
-func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
+func (c *Client) dial(ctx context.Context) (*ssh.Client, *readConn, error) {
 	hkc, err := c.target.hostKeyCallback()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// One deadline covers the agent socket and the SSH connection, and it
@@ -292,7 +447,7 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 
 	methods, cleanup, err := c.target.authMethods(dialCtx, att)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer cleanup()
 
@@ -306,12 +461,15 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	}
 
 	if err != nil {
-		return nil, errors.Wrapf(err, "dial ssh %s", addr)
+		return nil, nil, errors.Wrapf(err, "dial ssh %s", addr)
 	}
 
 	att.add(conn)
 
-	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, &ssh.ClientConfig{
+	rc := &readConn{Conn: conn}
+	rc.touch()
+
+	sc, chans, reqs, err := ssh.NewClientConn(rc, addr, &ssh.ClientConfig{
 		User:            c.target.User,
 		Auth:            methods,
 		HostKeyCallback: hkc,
@@ -319,17 +477,50 @@ func (c *Client) dial(ctx context.Context) (*ssh.Client, error) {
 	})
 	if err != nil {
 		_ = conn.Close()
-		return nil, errors.Wrapf(err, "ssh handshake %s", addr)
+		return nil, nil, errors.Wrapf(err, "ssh handshake %s", addr)
 	}
 
 	// Once abort has started it may expire conn's deadline at any moment,
 	// so a handshake that finished just as ctx was cancelled is discarded.
 	if !stop() {
 		_ = sc.Close()
-		return nil, errors.Wrapf(ctx.Err(), "ssh handshake %s", addr)
+		return nil, nil, errors.Wrapf(ctx.Err(), "ssh handshake %s", addr)
 	}
 
 	_ = conn.SetDeadline(time.Time{})
 
-	return ssh.NewClient(sc, chans, reqs), nil
+	return ssh.NewClient(sc, chans, reqs), rc, nil
 }
+
+// readConn records the time of its last successful Read, and how many
+// Writes are in flight. A failed Read clears the time, so a connection the
+// peer closed is probed, not reused.
+type readConn struct {
+	net.Conn
+
+	last    atomic.Int64
+	writing atomic.Int32
+}
+
+func (r *readConn) Write(p []byte) (int, error) {
+	r.writing.Add(1)
+	defer r.writing.Add(-1)
+
+	return r.Conn.Write(p)
+}
+
+func (r *readConn) Read(p []byte) (int, error) {
+	n, err := r.Conn.Read(p)
+	switch {
+	case err != nil:
+		r.last.Store(0)
+	case n > 0:
+		r.touch()
+	}
+
+	return n, err
+}
+
+func (r *readConn) touch() { r.last.Store(time.Now().UnixNano()) }
+
+func (r *readConn) lastRead() time.Time { return time.Unix(0, r.last.Load()) }

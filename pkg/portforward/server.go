@@ -133,15 +133,15 @@ func (s *Server) handle(ctx context.Context, client net.Conn) {
 	}
 	defer up.Close()
 
-	done := make(chan int64, 2)
+	sentc, recvc := make(chan int64, 1), make(chan int64, 1)
 
-	go func() { done <- pipe(up, client) }()
-	go func() { done <- pipe(client, up) }()
+	go func() { sentc <- pipe(up, client) }()
+	go func() { recvc <- pipe(client, up) }()
 
-	bytes := <-done + <-done
+	sent, recv := <-sentc, <-recvc
 
 	s.opts.Logger.Info("conn", "target", s.opts.Target, "upstream", dialer.Name(),
-		"bytes", bytes, "dur", time.Since(start))
+		"sent", sent, "recv", recv, "dur", time.Since(start))
 }
 
 func (s *Server) pick() upstream.Dialer {

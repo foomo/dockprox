@@ -25,6 +25,14 @@ import (
 func startHandshakeOnlyServer(t *testing.T) (addr, hostFP string) { //nolint:nonamedreturns
 	t.Helper()
 
+	return startServer(t, serveHandshakeOnlyConn)
+}
+
+// startServer runs an in-process SSH server that hands each accepted
+// connection to serve.
+func startServer(t *testing.T, serve func(net.Conn, *ssh.ServerConfig)) (addr, hostFP string) { //nolint:nonamedreturns
+	t.Helper()
+
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +65,7 @@ func startHandshakeOnlyServer(t *testing.T) (addr, hostFP string) { //nolint:non
 				return
 			}
 
-			go serveHandshakeOnlyConn(raw, cfg)
+			go serve(raw, cfg)
 		}
 	}()
 
@@ -525,5 +533,212 @@ func TestClient_AutoconnectOff(t *testing.T) {
 	// The connection Up opened is reused on demand.
 	if _, err := c.Get(t.Context()); err != nil {
 		t.Fatalf("Get reusing live connection: %v", err)
+	}
+}
+
+// serveMuteConn completes the handshake, then never answers a request, like
+// a connection whose path died without a FIN.
+func serveMuteConn(raw net.Conn, cfg *ssh.ServerConfig) {
+	sc, chans, reqs, err := ssh.NewServerConn(raw, cfg)
+	if err != nil {
+		_ = raw.Close()
+		return
+	}
+	defer sc.Close()
+
+	go func() {
+		for nc := range chans {
+			_ = nc.Reject(ssh.Prohibited, "no channels")
+		}
+	}()
+
+	for range reqs {
+	}
+}
+
+// serveDeafConn completes the handshake, then reads nothing more: channel
+// opens and requests on it hang, like a path that died without a FIN.
+func serveDeafConn(raw net.Conn, cfg *ssh.ServerConfig) {
+	if _, _, _, err := ssh.NewServerConn(raw, cfg); err != nil {
+		_ = raw.Close()
+	}
+}
+
+// TestClient_DialContextRedialsDeadConn: a channel open that hangs on a dead
+// connection fails once the watcher closes it, and DialContext retries it
+// on a new connection, which here refuses channels, so the refusal proves
+// the retry.
+func TestClient_DialContextRedialsDeadConn(t *testing.T) {
+	var conns atomic.Int32
+
+	addr, hostFP := startServer(t, func(raw net.Conn, cfg *ssh.ServerConfig) {
+		if conns.Add(1) == 1 {
+			serveDeafConn(raw, cfg)
+		} else {
+			serveHandshakeOnlyConn(raw, cfg)
+		}
+	})
+
+	c := NewClient(testTarget(t, addr, hostFP))
+	c.timing.heartbeat, c.timing.probe = 50*time.Millisecond, 100*time.Millisecond
+
+	first, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	start := time.Now()
+
+	_, err = c.DialContext(t.Context(), "tcp", "127.0.0.1:1")
+	if !errors.As(err, new(*ssh.OpenChannelError)) {
+		t.Fatalf("err=%v, want the second connection's refusal", err)
+	}
+
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("retry took %v", d)
+	}
+
+	second, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if second == first || conns.Load() != 2 {
+		t.Fatalf("conns=%d, want a second connection after the dead one", conns.Load())
+	}
+}
+
+// TestClient_GetReusesWithoutProbe: an open connection is handed out at
+// once, even one that would not answer a probe.
+func TestClient_GetReusesWithoutProbe(t *testing.T) {
+	addr, hostFP := startServer(t, serveMuteConn)
+	c := NewClient(testTarget(t, addr, hostFP))
+
+	first, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	start := time.Now()
+
+	second, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+
+	if second != first {
+		t.Fatal("second Get redialled an open connection")
+	}
+
+	if d := time.Since(start); d >= time.Second {
+		t.Fatalf("second Get probed the connection: took %v", d)
+	}
+}
+
+// serveThenCloseConn completes the handshake, then closes the connection,
+// like a server that drops an idle client.
+func serveThenCloseConn(raw net.Conn, cfg *ssh.ServerConfig) {
+	sc, _, _, err := ssh.NewServerConn(raw, cfg)
+	if err != nil {
+		_ = raw.Close()
+		return
+	}
+
+	_ = sc.Close()
+}
+
+func TestClient_HeartbeatClosesDeadConn(t *testing.T) {
+	addr, hostFP := startServer(t, serveMuteConn)
+	c := NewClient(testTarget(t, addr, hostFP))
+	c.timing.heartbeat, c.timing.probe = 50*time.Millisecond, 100*time.Millisecond
+
+	if _, err := c.Get(t.Context()); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	waitFor(t, func() bool { return c.State() == ConnDisconnected })
+}
+
+func TestClient_HeartbeatKeepsLiveConn(t *testing.T) {
+	addr, hostFP := startHandshakeOnlyServer(t)
+	c := NewClient(testTarget(t, addr, hostFP))
+	c.timing.heartbeat, c.timing.probe = 20*time.Millisecond, time.Second
+
+	first, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if c.State() != ConnConnected {
+		t.Fatalf("state = %v after heartbeats", c.State())
+	}
+
+	second, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+
+	if second != first {
+		t.Fatal("heartbeat replaced a live connection")
+	}
+}
+
+func TestClient_ServerCloseForgetsConn(t *testing.T) {
+	addr, hostFP := startServer(t, serveThenCloseConn)
+	c := NewClient(testTarget(t, addr, hostFP))
+
+	first, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	waitFor(t, func() bool { return c.State() == ConnDisconnected })
+
+	second, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+
+	if second == first {
+		t.Fatal("Get reused a connection the server closed")
+	}
+}
+
+func TestClient_KeepaliveWaitsOutStall(t *testing.T) {
+	addr, hostFP := startServer(t, serveMuteConn)
+	c := NewClient(testTarget(t, addr, hostFP))
+	c.timing.probe, c.timing.stall = 50*time.Millisecond, 400*time.Millisecond
+
+	cli, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	t.Cleanup(func() { _ = c.Close() })
+
+	start := time.Now()
+
+	if err := c.keepalive(cli, c.conn); err == nil {
+		t.Fatal("idle probe of a mute server succeeded")
+	}
+
+	if d := time.Since(start); d >= c.timing.stall {
+		t.Fatalf("idle probe took %v, want about timing.probe", d)
+	}
+
+	// A blocked write means the path is congested: wait for it to drain.
+	c.conn.writing.Add(1)
+	defer c.conn.writing.Add(-1)
+
+	start = time.Now()
+
+	if err := c.keepalive(cli, c.conn); err == nil {
+		t.Fatal("stalled probe of a mute server succeeded")
+	}
+
+	if d := time.Since(start); d < c.timing.stall {
+		t.Fatalf("stalled probe gave up after %v, want at least %v", d, c.timing.stall)
 	}
 }
