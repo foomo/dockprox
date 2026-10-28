@@ -55,5 +55,13 @@ docs/.vitepress/*
 !docs/.vitepress/theme/
 !docs/.vitepress/config.mts
 
+## OSV Scanner
+".osv-scanner.toml
+
 ## binary
 dockprox
+
+.projectmem/events.jsonl
+.projectmem/watch.pid
+.projectmem/watch.log
+.projectmem/structure.json

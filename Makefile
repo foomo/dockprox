@@ -138,7 +138,7 @@ install.debug:
 ## Run security audit
 audit:
 	@echo "〉security audit"
-	@govulncheck ./...
+	@osv-scanner --call-analysis=all --config=.osv-scanner.toml -r .
 
 ### Dependencies
 
