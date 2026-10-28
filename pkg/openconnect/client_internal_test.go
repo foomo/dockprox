@@ -72,7 +72,7 @@ func fakeOpenconnect(mode string) {
 
 	switch mode {
 	case "hang":
-		select {}
+		time.Sleep(time.Hour)
 	case "stubborn":
 		signal.Ignore(syscall.SIGTERM)
 
@@ -93,7 +93,7 @@ func fakeOpenconnect(mode string) {
 
 		fmt.Println("Configured as 10.0.0.2, with SSL connected and DTLS disabled")
 
-		select {}
+		time.Sleep(time.Hour)
 	}
 
 	_, port, _ := strings.Cut(script, " -D ")

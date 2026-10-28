@@ -16,6 +16,8 @@ goreleaser = "2.18.3"
 jsonschema = "17.3.0"
 # https://mise-tools.jdx.dev/tools/lefthook
 lefthook = "2.2.2"
+# https://mise-tools.jdx.dev/tools/gotestsum
+gotestsum = "1.13.0"
 # https://mise-tools.jdx.dev/tools/osv-scanner
 osv-scanner = "2.7.0"
 # https://github.com/oligot/go-mod-upgrade/releases
