@@ -296,6 +296,7 @@ func (u Upstream) rejectOpenConnectFields() error {
 		{"server", u.Server != ""},
 		{"protocol", u.Protocol != ""},
 		{"serverCert", u.ServerCert != ""},
+		{"tun", u.Tun},
 	} {
 		if f.set {
 			return errors.Errorf("%s: only valid on type %q", f.name, UpstreamOpenConnect)

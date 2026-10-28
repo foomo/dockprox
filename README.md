@@ -150,7 +150,7 @@ Upstream `type` values:
 - `socks5` — `addr: host:port`, optional `auth`, `tls`, `dns: local|remote`.
 - `http` — HTTP CONNECT proxy, `url: http(s)://...`.
 - `ssh` — dockprox-owned SSH tunnel: `host`, optional `port`/`user`, `keyFile`/`identityAgent` for auth, `hostKey` (or `~/.ssh/known_hosts`) for host key verification, optional `via` to dial the bastion through another upstream.
-- `openconnect` — rootless VPN (F5, AnyConnect, …) via openconnect + ocproxy: `server`, `auth`, optional `protocol`, `serverCert`.
+- `openconnect` — rootless VPN (F5, AnyConnect, …) via openconnect + ocproxy: `server`, `auth`, optional `protocol`, `serverCert`, `tun` (kernel tun via `sudo -n` instead of ocproxy).
 - `direct` — explicit passthrough.
 
 Rule `match`: exact host (`ghcr.io`) or `*.suffix` wildcard (`*.azurecr.io`).

@@ -45,6 +45,7 @@ command.
 | Feature | Tools | Install |
 |---|---|---|
 | [`openconnect` upstream](./usage.md#openconnect-vpn) | `openconnect`, `ocproxy` | `brew install openconnect ocproxy` |
+| [`openconnect` upstream, `tun: true`](./usage.md#kernel-tun-mode) | `openconnect`, `sudo` | `brew install openconnect`, then `dockprox tun install` |
 | [`op://` secrets](./configuration.md#secrets) | 1Password CLI `op` | `brew install --cask 1password-cli`, then enable *Settings → Developer → Integrate with 1Password CLI* in the desktop app |
 | [`keychain://` secrets](./configuration.md#secrets) | `security` | ships with macOS |
 

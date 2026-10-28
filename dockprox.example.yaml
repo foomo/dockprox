@@ -86,6 +86,10 @@ upstreams:
       username: user
       password: pass
     serverCert: pin-sha256:AAAA...  # optional: pin the gateway certificate (--servercert)
+    # Kernel tun instead of ocproxy: runs `sudo -n openconnect`, so the VPN's
+    # routes and DNS apply system-wide while connected. Needs a sudoers line
+    # (dockprox prints it at startup): user ALL=(root) NOPASSWD: openconnect, kill
+    tun: false
 
 # Local ports besides the HTTP proxy: SOCKS5 servers, for tools that speak
 # SOCKS5 rather than HTTPS_PROXY, and plain TCP forwards. Optional.
