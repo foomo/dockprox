@@ -662,6 +662,36 @@ func TestController_ConnectDisconnectUpstream(t *testing.T) {
 	require.Error(t, ctrl.ConnectUpstream("does-not-exist"))
 }
 
+func TestController_DisconnectUpstreamStopsPinnedTunnel(t *testing.T) {
+	dir := t.TempDir()
+	sshAddr, hostFP := startTestSSHServer(t)
+	listen := freePort(t)
+	cfg := writeReachableTunnelConfig(t, dir, sshAddr, hostFP, listen)
+	ctrl := menubar.New(cfg, newTestLogger())
+
+	t.Cleanup(func() { _ = ctrl.Stop() })
+
+	require.NoError(t, ctrl.Start())
+	waitUntil(t, menubar.StateRunning, ctrl)
+
+	require.NoError(t, ctrl.ConnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+
+	// The tunnel is pinned to jump, so it goes down with it.
+	require.NoError(t, ctrl.DisconnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnUnknown)
+
+	for _, ts := range ctrl.Snapshot().Tunnels {
+		if ts.Name == listen {
+			assert.Equal(t, menubar.TunnelStopped, ts.State)
+		}
+	}
+
+	// Starting the tunnel brings jump back up despite the earlier Down.
+	require.NoError(t, ctrl.StartTunnel(listen))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+}
+
 func TestController_AutoconnectOffNeedsClick(t *testing.T) {
 	dir := t.TempDir()
 	sshAddr, hostFP := startTestSSHServer(t)

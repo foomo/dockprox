@@ -4,6 +4,7 @@ package menubar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/openconnect"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -195,11 +197,14 @@ func (t *Tray) rebuildMenu() {
 			t.logger.Warn("open releases", "err", err)
 		}
 	})
-	menu.AddSeparator()
 
 	if snap.State == StateError && snap.LastError != nil {
-		menu.Add(fmt.Sprintf("Error: %s", snap.LastError)).SetEnabled(false)
+		menu.Add(fmt.Sprintf("⚠️ %s", snap.LastError)).SetEnabled(false)
 	}
+
+	menu.AddSeparator()
+
+	menu.Add("📡 Listeners").SetEnabled(false)
 
 	if snap.ListenAddr != "" {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
@@ -235,6 +240,7 @@ func (t *Tray) rebuildMenu() {
 	// disconnect (see upstreamRow), then forwards.
 	if len(snap.Upstreams)+len(snap.Forwards) > 0 {
 		menu.AddSeparator()
+		menu.Add("🛶 Upstreams").SetEnabled(false)
 	}
 
 	for _, us := range snap.Upstreams {
@@ -263,6 +269,11 @@ func (t *Tray) rebuildMenu() {
 	// accepts a connection. They have nothing to connect or disconnect, so
 	// the rows are informational only.
 	up := t.forwardUp.Load()
+
+	if len(snap.Forwards) > 0 {
+		menu.AddSeparator()
+		menu.Add("🚸 Forwards").SetEnabled(false)
+	}
 
 	for _, fs := range snap.Forwards {
 		// "?" until the first probe returns, so an unprobed forward is not
@@ -359,6 +370,21 @@ func (t *Tray) rebuildMenu() {
 			return nil
 		})
 	})
+
+	// Tun mode needs a sudoers drop-in, and Start fails for lack of it.
+	// Install it one-time through the macOS authorization dialog, then
+	// Start again.
+	if errors.Is(snap.LastError, openconnect.ErrSudoers) {
+		settings.Add("🔐 Install VPN sudoers…").OnClick(func(_ *application.Context) {
+			t.runBusy("install sudoers", func() error {
+				if err := openconnect.InstallSudoersGUI(context.Background()); err != nil {
+					return err
+				}
+
+				return t.ctrl.Start()
+			})
+		})
+	}
 
 	// Logs and config path: click to reveal in Finder.
 	settings.AddSeparator()

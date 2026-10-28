@@ -321,6 +321,7 @@ func (c *ProxyController) Start() error {
 			d.OnStateChange(c.sshStateChanged(d.State))
 		case *upstream.OpenConnectDialer:
 			d.OnStateChange(c.notify)
+			d.OnDrop(c.upstreamDropped(reg, name))
 		}
 	}
 
@@ -628,17 +629,98 @@ func (c *ProxyController) ConnectUpstream(name string) error {
 // DisconnectUpstream closes the named upstream's connection, aborting a
 // connect in flight, and keeps it closed until ConnectUpstream: requests
 // routed through it fail rather than silently reconnecting and prompting
-// for another approval.
+// for another approval. Its dependents follow it down: the ssh upstreams
+// that reach their bastion through it, and the tunnels pinned to it or to
+// one of those, so none of them is left looking up while it cannot work.
 func (c *ProxyController) DisconnectUpstream(name string) error {
 	d, _, err := c.conn(name)
 	if err != nil {
 		return err
 	}
 
+	c.logger.Info("disconnect upstream", "name", name, "state", d.State())
+
+	c.mu.Lock()
+	reg := c.reg
+	c.mu.Unlock()
+
 	d.Down()
-	c.notify()
+	c.downDependents(reg, name)
 
 	return nil
+}
+
+// upstreamDropped returns the hook for a connection of reg's that went down
+// on its own: its dependents follow it down as on DisconnectUpstream, but
+// the upstream itself is not held, so it still reconnects on demand. A hook
+// from a registry that is no longer the running one does nothing.
+func (c *ProxyController) upstreamDropped(reg *upstream.Registry, name string) func() {
+	return func() {
+		c.mu.Lock()
+		current := c.state == StateRunning && c.reg == reg
+		c.mu.Unlock()
+
+		if !current {
+			return
+		}
+
+		c.logger.Warn("upstream dropped", "name", name)
+		c.downDependents(reg, name)
+	}
+}
+
+// downDependents holds down the ssh upstreams that use name as via and
+// stops the tunnels pinned to name or to one of those, then repaints.
+func (c *ProxyController) downDependents(reg *upstream.Registry, name string) {
+	c.mu.Lock()
+	if c.cfg == nil || c.reg != reg {
+		c.mu.Unlock()
+		return
+	}
+
+	ups, tunnels := c.dependentsLocked(name)
+	c.mu.Unlock()
+
+	if len(ups)+len(tunnels) > 0 {
+		c.logger.Info("down dependents", "name", name, "upstreams", ups, "tunnels", tunnels)
+	}
+
+	for _, n := range ups {
+		if d := c.connDialer(reg, n); d != nil {
+			d.Down()
+		}
+	}
+
+	for _, t := range tunnels {
+		if err := c.StopTunnel(t); err != nil {
+			c.logger.Warn("down dependents", "name", name, "tunnel", t, "err", err)
+		}
+	}
+
+	c.notify()
+}
+
+// dependentsLocked returns what depends on the named upstream: the ssh
+// upstreams whose via it is, and the listening tunnels pinned to it or to
+// one of those. Via names a non-ssh upstream, so one level is the whole
+// chain. Callers must hold c.mu.
+func (c *ProxyController) dependentsLocked(name string) (ups, tunnels []string) { //nolint:nonamedreturns // two same-typed results
+	pinned := map[string]bool{name: true}
+
+	for _, n := range connNames(c.cfg) {
+		if c.cfg.Upstreams[n].Via == name {
+			ups = append(ups, n)
+			pinned[n] = true
+		}
+	}
+
+	for _, t := range slices.Sorted(maps.Keys(c.tunnels)) {
+		if h := c.tunnels[t]; h.srv != nil && pinned[h.upstream] {
+			tunnels = append(tunnels, t)
+		}
+	}
+
+	return ups, tunnels
 }
 
 // serveTunnel runs h's listener in its own goroutine, using tctx (h's own
@@ -688,13 +770,21 @@ func (c *ProxyController) connectTunnel(h *tunnelHandle, tctx context.Context) {
 		return
 	}
 
+	// Starting the tunnel is a request for its whole chain: Up clears a
+	// Down left on the upstream or its via by an earlier disconnect. With
+	// autoconnect off, Connect keeps the start from dialing at all.
+	connect := sd.Connect
+	if c.Autoconnect() {
+		connect = sd.Up
+	}
+
 	go func() {
 		// Connect publishes ConnConnecting before it does anything that can
 		// block, so notifying once here paints the connecting glyph; the
 		// notify after it returns paints the outcome.
 		c.notify()
 
-		if err := sd.Connect(tctx); err != nil {
+		if err := connect(tctx); err != nil {
 			// Not fatal: the listener stays up and each connection
 			// retries the dial lazily, so this is the same state the
 			// tunnel would have been in without the eager connect.

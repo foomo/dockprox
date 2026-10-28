@@ -127,7 +127,15 @@ With **Autoconnect** on (the default), a connection also opens on its own
 when a proxied request, a listener or a `via` needs it — unless you
 disconnected it from the menu: then it stays down, and requests through
 it fail, until you click it again. Starting a listener pinned to an ssh
-upstream connects it eagerly.
+upstream connects it eagerly, together with its `via`, even if either was
+disconnected from the menu.
+
+Disconnecting an upstream also takes down what depends on it: the `ssh`
+upstreams that use it as `via`, and the listeners pinned to it or to one
+of those. Disconnecting an `ssh` upstream leaves its `via` up. The same
+happens when an `openconnect` VPN drops on its own (e.g. the server ends
+the session), except that the VPN itself is not held down. Start a
+pinned listener or connect the `ssh` upstream to bring the chain back.
 
 With **Autoconnect** off, nothing connects on its own: requests use a
 connection only if it is already up, so background traffic never sends
