@@ -104,3 +104,32 @@ func TestUpstreamRow_GlyphAgreesWithAction(t *testing.T) {
 		}
 	}
 }
+
+func TestUpstreamConnecting(t *testing.T) {
+	up := func(cs ...sshclient.ConnState) []UpstreamStatus {
+		out := make([]UpstreamStatus, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, UpstreamStatus{Name: "u", ConnState: c})
+		}
+
+		return out
+	}
+
+	for _, tc := range []struct {
+		name   string
+		status Status
+		want   bool
+	}{
+		{"no upstreams", Status{State: StateRunning}, false},
+		{"connected only", Status{State: StateRunning, Upstreams: up(sshclient.ConnConnected, sshclient.ConnUnknown)}, false},
+		{"one connecting", Status{State: StateRunning, Upstreams: up(sshclient.ConnConnected, sshclient.ConnConnecting)}, true},
+		{"awaiting approval", Status{State: StateRunning, Upstreams: up(sshclient.ConnAwaitingApproval)}, true},
+		{"connecting but stopped", Status{State: StateStopped, Upstreams: up(sshclient.ConnConnecting)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := upstreamConnecting(tc.status); got != tc.want {
+				t.Errorf("upstreamConnecting() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

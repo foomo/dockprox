@@ -50,24 +50,28 @@ func (s *Server) handleConnect(ctx context.Context, client net.Conn, br *bufio.R
 	}
 
 	dialer := s.pick(host)
+	s.opts.Logger.Debug("connect", "host", host, "upstream", dialer.Name())
 
 	up, err := dialer.Dial(ctx, target)
+	dial := time.Since(start)
+
 	if err != nil {
 		s.opts.Logger.Warn("conn", "host", host, "upstream", dialer.Name(),
-			"err", err.Error(), "dur", time.Since(start))
+			"err", err.Error(), "dial", dial, "dur", time.Since(start))
 
 		_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 
 		return
 	}
+
 	defer up.Close()
 
 	_, _ = fmt.Fprintf(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
 
-	bytes := spliceClientServer(client, br, up)
+	sent, recv := spliceClientServer(client, br, up)
 	s.opts.Logger.Info("conn", "host", host, "upstream", dialer.Name(),
-		"method", http.MethodConnect, "status", 200, "bytes", bytes,
-		"dur", time.Since(start))
+		"method", http.MethodConnect, "status", 200, "sent", sent, "recv", recv,
+		"dial", dial, "dur", time.Since(start))
 }
 
 func (s *Server) handleForward(ctx context.Context, client net.Conn, br *bufio.Reader, start time.Time) {
@@ -90,16 +94,20 @@ func (s *Server) handleForward(ctx context.Context, client net.Conn, br *bufio.R
 	}
 
 	dialer := s.pick(host)
+	s.opts.Logger.Debug("forward", "host", host, "upstream", dialer.Name())
 
 	up, err := dialer.Dial(ctx, net.JoinHostPort(host, port))
+	dial := time.Since(start)
+
 	if err != nil {
 		_, _ = fmt.Fprintf(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 
 		s.opts.Logger.Warn("conn", "host", host, "upstream", dialer.Name(),
-			"err", err.Error(), "dur", time.Since(start))
+			"err", err.Error(), "dial", dial, "dur", time.Since(start))
 
 		return
 	}
+
 	defer up.Close()
 
 	req.RequestURI = ""
@@ -131,7 +139,7 @@ func (s *Server) handleForward(ctx context.Context, client net.Conn, br *bufio.R
 
 	s.opts.Logger.Info("conn", "host", host, "upstream", dialer.Name(),
 		"method", req.Method, "status", resp.StatusCode,
-		"dur", time.Since(start))
+		"dial", dial, "dur", time.Since(start))
 }
 
 func (s *Server) pick(host string) upstream.Dialer {
@@ -144,23 +152,22 @@ func (s *Server) pick(host string) upstream.Dialer {
 	return s.opts.Registry.Direct()
 }
 
-func spliceClientServer(client net.Conn, br *bufio.Reader, up net.Conn) int64 {
-	done := make(chan int64, 2)
+// spliceClientServer pumps both directions and returns the bytes sent
+// upstream (client to server) and received (server to client).
+func spliceClientServer(client net.Conn, br *bufio.Reader, up net.Conn) (int64, int64) {
+	sent, recv := make(chan int64, 1), make(chan int64, 1)
 
 	go func() {
 		// drain any bytes already buffered in br first, then pump client.
 		n1, _ := io.Copy(up, br)
 
 		n2, _ := io.Copy(up, client)
-		done <- n1 + n2
+		sent <- n1 + n2
 	}()
 	go func() {
 		n, _ := io.Copy(client, up)
-		done <- n
+		recv <- n
 	}()
 
-	a := <-done
-	b := <-done
-
-	return a + b
+	return <-sent, <-recv
 }

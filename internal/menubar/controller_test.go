@@ -91,40 +91,34 @@ rules:
 	return path
 }
 
-// writeTwoTunnelTestConfig writes a config with two type: ssh upstreams,
+// writeTwoTunnelTestConfig writes a config with two type: socks5 upstreams,
 // each with its own pinned listener on a fixed address (not :0, so the test can
-// dial the untouched tunnel's address after stopping the other).
+// dial the untouched tunnel's address after stopping the other). socks5
+// upstreams hold no connection, so both listeners bind at Start.
 func writeTwoTunnelTestConfig(t *testing.T, dir, firstListen, secondListen string) string {
 	t.Helper()
-
-	key := writeTestKey(t, dir)
-	fp := fixedFingerprint()
 
 	yaml := fmt.Sprintf(`version: 1
 listen: 127.0.0.1:0
 log_level: error
 upstreams:
   first:
-    type: ssh
-    host: bastion1.invalid
-    keyFile: %[1]s
-    hostKey: %[2]q
+    type: socks5
+    addr: 127.0.0.1:1
   second:
-    type: ssh
-    host: bastion2.invalid
-    keyFile: %[1]s
-    hostKey: %[2]q
+    type: socks5
+    addr: 127.0.0.1:2
 listeners:
-  - listen: %[3]s
+  - listen: %[1]s
     upstream: first
-  - listen: %[4]s
+  - listen: %[2]s
     upstream: second
 rules:
   - match: "*.internal.invalid"
     upstream: first
   - match: "*.other.invalid"
     upstream: second
-`, key, fp, firstListen, secondListen)
+`, firstListen, secondListen)
 
 	path := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
@@ -269,7 +263,7 @@ func TestController_SubscribeReceivesStateChanges(t *testing.T) {
 	assert.Contains(t, states, menubar.StateStopped)
 }
 
-func TestController_StartWithTunnelReachesListening(t *testing.T) {
+func TestController_StartWithSSHTunnelWaitsForUpstream(t *testing.T) {
 	dir := t.TempDir()
 	cfg := writeTunnelTestConfig(t, dir, "127.0.0.1:0")
 	ctrl := menubar.New(cfg, newTestLogger())
@@ -283,8 +277,8 @@ func TestController_StartWithTunnelReachesListening(t *testing.T) {
 	require.Len(t, tunnels, 1)
 	assert.Equal(t, "127.0.0.1:0", tunnels[0].Name)
 	assert.Equal(t, "jump", tunnels[0].Upstream)
-	assert.Equal(t, menubar.TunnelListening, tunnels[0].State)
-	assert.NotEmpty(t, tunnels[0].Addr)
+	assert.Equal(t, menubar.TunnelStopped, tunnels[0].State, "jump is not connected")
+	assert.Empty(t, tunnels[0].Addr)
 
 	ups := ctrl.Snapshot().Upstreams
 	require.Len(t, ups, 1)
@@ -357,6 +351,30 @@ func TestController_StartTunnelRebindsStoppedTunnel(t *testing.T) {
 	require.NoError(t, err)
 
 	_ = c.Close()
+}
+
+// waitTunnel polls until the named tunnel reports want, or fails. Tunnels
+// pinned to a connection follow its state in the background.
+func waitTunnel(t *testing.T, ctrl *menubar.ProxyController, name string, want menubar.TunnelState) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	var got menubar.TunnelState
+
+	for time.Now().Before(deadline) {
+		for _, ts := range ctrl.Snapshot().Tunnels {
+			if ts.Name == name {
+				if got = ts.State; got == want {
+					return
+				}
+			}
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("tunnel %q State = %v; want %v", name, got, want)
 }
 
 // waitUpstreamConn polls until the named upstream reports want, or fails.
@@ -494,21 +512,15 @@ func TestController_StartTunnelConnectsSSHEagerly(t *testing.T) {
 	require.NoError(t, ctrl.Start())
 	waitUntil(t, menubar.StateRunning, ctrl)
 
-	// Start alone stays lazy: binding the listener must not dial.
+	// Start alone stays lazy: nothing dials, so nothing listens.
 	require.NoError(t, ctrl.StopTunnel(listen))
 
-	// Clicking the tunnel row brings up both the listener and the SSH
-	// connection, so the menu can show it connected without any traffic
-	// having passed through it.
+	// Clicking the tunnel row brings up the SSH connection, and the
+	// listener with it.
 	require.NoError(t, ctrl.StartTunnel(listen))
 
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
-
-	for _, ts := range ctrl.Snapshot().Tunnels {
-		if ts.Name == listen {
-			assert.Equal(t, menubar.TunnelListening, ts.State)
-		}
-	}
+	waitTunnel(t, ctrl, listen, menubar.TunnelListening)
 }
 
 // startStalledSSHServer accepts TCP but never speaks SSH, so a dial against
@@ -558,10 +570,10 @@ func TestController_StartTunnelReportsConnectingWhileDialing(t *testing.T) {
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnecting)
 }
 
-func TestController_StartTunnelKeepsListeningWhenSSHUnreachable(t *testing.T) {
+func TestController_StartTunnelStaysStoppedWhenSSHUnreachable(t *testing.T) {
 	dir := t.TempDir()
 	listen := freePort(t)
-	// bastion.invalid never resolves, so the eager connect fails.
+	// bastion.invalid never resolves, so the connect fails.
 	cfg := writeTunnelTestConfig(t, dir, listen)
 	ctrl := menubar.New(cfg, newTestLogger())
 
@@ -569,10 +581,9 @@ func TestController_StartTunnelKeepsListeningWhenSSHUnreachable(t *testing.T) {
 
 	require.NoError(t, ctrl.Start())
 	waitUntil(t, menubar.StateRunning, ctrl)
-	require.NoError(t, ctrl.StopTunnel(listen))
 
-	// A failing dial must not fail the click: the listener is what the
-	// caller asked for, and connections still retry lazily.
+	// A failing dial must not fail the click, but the listener does not
+	// accept while what it dials through is not connected.
 	require.NoError(t, ctrl.StartTunnel(listen))
 
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnDisconnected)
@@ -582,14 +593,12 @@ func TestController_StartTunnelKeepsListeningWhenSSHUnreachable(t *testing.T) {
 
 	for _, ts := range snap.Tunnels {
 		if ts.Name == listen {
-			assert.Equal(t, menubar.TunnelListening, ts.State, "listener stays up despite the failed dial")
+			assert.Equal(t, menubar.TunnelStopped, ts.State)
 		}
 	}
 
-	c, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", listen)
-	require.NoError(t, err, "listener should still accept connections")
-
-	_ = c.Close()
+	_, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", listen)
+	assert.Error(t, err, "listener must not accept connections")
 }
 
 func TestController_StopTunnelUnknownNameErrors(t *testing.T) {
@@ -662,6 +671,42 @@ func TestController_ConnectDisconnectUpstream(t *testing.T) {
 	require.Error(t, ctrl.ConnectUpstream("does-not-exist"))
 }
 
+func TestController_DisconnectUpstreamStopsPinnedTunnel(t *testing.T) {
+	dir := t.TempDir()
+	sshAddr, hostFP := startTestSSHServer(t)
+	listen := freePort(t)
+	cfg := writeReachableTunnelConfig(t, dir, sshAddr, hostFP, listen)
+	ctrl := menubar.New(cfg, newTestLogger())
+
+	t.Cleanup(func() { _ = ctrl.Stop() })
+
+	require.NoError(t, ctrl.Start())
+	waitUntil(t, menubar.StateRunning, ctrl)
+
+	// The tunnel is pinned to jump, so it comes up with it...
+	require.NoError(t, ctrl.ConnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+	waitTunnel(t, ctrl, listen, menubar.TunnelListening)
+
+	// ...and goes down with it.
+	require.NoError(t, ctrl.DisconnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnUnknown)
+	waitTunnel(t, ctrl, listen, menubar.TunnelStopped)
+
+	// Starting the tunnel brings jump back up despite the earlier Down.
+	require.NoError(t, ctrl.StartTunnel(listen))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+	waitTunnel(t, ctrl, listen, menubar.TunnelListening)
+
+	// A stopped tunnel stays stopped across a reconnect.
+	require.NoError(t, ctrl.StopTunnel(listen))
+	require.NoError(t, ctrl.DisconnectUpstream("jump"))
+	require.NoError(t, ctrl.ConnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+	time.Sleep(200 * time.Millisecond)
+	waitTunnel(t, ctrl, listen, menubar.TunnelStopped)
+}
+
 func TestController_AutoconnectOffNeedsClick(t *testing.T) {
 	dir := t.TempDir()
 	sshAddr, hostFP := startTestSSHServer(t)
@@ -675,17 +720,37 @@ func TestController_AutoconnectOffNeedsClick(t *testing.T) {
 	require.NoError(t, ctrl.Start())
 	waitUntil(t, menubar.StateRunning, ctrl)
 
-	// Restarting the listener would connect eagerly; with autoconnect off
-	// it must not.
-	require.NoError(t, ctrl.StopTunnel(listen))
-	require.NoError(t, ctrl.StartTunnel(listen))
-
+	// The listener bound at Start does not dial with autoconnect off.
 	time.Sleep(200 * time.Millisecond)
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnUnknown)
 
 	// A click still connects.
 	require.NoError(t, ctrl.ConnectUpstream("jump"))
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+}
+
+func TestController_StartTunnelBringsUpHeldUpstreamWithAutoconnectOff(t *testing.T) {
+	dir := t.TempDir()
+	sshAddr, hostFP := startTestSSHServer(t)
+	listen := freePort(t)
+	cfg := writeReachableTunnelConfig(t, dir, sshAddr, hostFP, listen)
+	ctrl := menubar.New(cfg, newTestLogger())
+
+	t.Cleanup(func() { _ = ctrl.Stop() })
+
+	ctrl.SetAutoconnect(false)
+	require.NoError(t, ctrl.Start())
+	waitUntil(t, menubar.StateRunning, ctrl)
+
+	require.NoError(t, ctrl.DisconnectUpstream("jump"))
+	waitTunnel(t, ctrl, listen, menubar.TunnelStopped)
+
+	// Starting the tunnel is a request for its chain, like an ssh
+	// upstream's Up for its via: it brings jump up even with autoconnect
+	// off, and the listener once jump is connected.
+	require.NoError(t, ctrl.StartTunnel(listen))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+	waitTunnel(t, ctrl, listen, menubar.TunnelListening)
 }
 
 func TestController_AutoconnectBackOnConnectsOnDemand(t *testing.T) {

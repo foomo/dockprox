@@ -1,11 +1,10 @@
 name: Test Branch
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+  workflow_call:
   workflow_dispatch:
-
+    
 permissions:
   contents: read
 
@@ -36,7 +35,7 @@ jobs:
           path: ~/.cache/golangci-lint
           key: golangci-lint-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
           restore-keys: |
-            golangci-lint-${{ runner.os }}--
+            golangci-lint-${{ runner.os }}-
 
       - name: Run tidy
         run: make tidy && git diff --exit-code
@@ -52,7 +51,7 @@ jobs:
 
       # https://github.com/codecov/codecov-action/releases
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        if: success() && github.ref == 'refs/heads/main'
+        if: success()
         with:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}

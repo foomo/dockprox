@@ -3,7 +3,9 @@ package upstream
 import (
 	"context"
 	"net"
+	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/pkg/errors"
@@ -44,21 +46,16 @@ func (d *SSHDialer) Name() string { return d.name }
 
 // Dial implements Dialer.
 func (d *SSHDialer) Dial(ctx context.Context, hostPort string) (net.Conn, error) {
+	start := time.Now()
+
 	if err := d.connectVia(ctx); err != nil {
 		return nil, err
 	}
 
-	cli, err := d.cli.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
+	c, err := d.cli.DialContext(ctx, "tcp", hostPort)
+	log.Debug("ssh channel", "upstream", d.name, "target", hostPort, "dur", time.Since(start), "err", err)
 
-	c, err := cli.DialContext(ctx, "tcp", hostPort)
-	if err != nil {
-		return nil, errors.Wrapf(err, "ssh dial %s", hostPort)
-	}
-
-	return c, nil
+	return c, err
 }
 
 // Connect establishes the SSH connection without opening a target channel,

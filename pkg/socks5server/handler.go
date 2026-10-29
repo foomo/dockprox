@@ -47,24 +47,28 @@ func (s *Server) handle(ctx context.Context, client net.Conn) {
 	target := net.JoinHostPort(host, strconv.Itoa(port))
 
 	dialer := s.pick(host)
+	s.opts.Logger.Debug("connect", "host", host, "upstream", dialer.Name())
 
 	up, err := dialer.Dial(ctx, target)
+	dial := time.Since(start)
+
 	if err != nil {
 		_ = writeReply(client, replyCodeFor(err))
 		s.opts.Logger.Warn("conn", "host", host, "upstream", dialer.Name(),
-			"err", err.Error(), "dur", time.Since(start))
+			"err", err.Error(), "dial", dial, "dur", time.Since(start))
 
 		return
 	}
+
 	defer up.Close()
 
 	if err := writeReply(client, replySucceeded); err != nil {
 		return
 	}
 
-	bytes := spliceClientUpstream(client, up)
+	sent, recv := spliceClientUpstream(client, up)
 	s.opts.Logger.Info("conn", "host", host, "upstream", dialer.Name(),
-		"bytes", bytes, "dur", time.Since(start))
+		"sent", sent, "recv", recv, "dial", dial, "dur", time.Since(start))
 }
 
 // negotiateMethod reads the RFC1928 greeting and selects the no-auth
@@ -179,20 +183,19 @@ func replyCodeFor(err error) byte {
 	return replyConnRefused
 }
 
-func spliceClientUpstream(client net.Conn, up net.Conn) int64 {
-	done := make(chan int64, 2)
+// spliceClientUpstream pumps both directions and returns the bytes sent
+// upstream (client to server) and received (server to client).
+func spliceClientUpstream(client net.Conn, up net.Conn) (int64, int64) {
+	sent, recv := make(chan int64, 1), make(chan int64, 1)
 
 	go func() {
 		n, _ := io.Copy(up, client)
-		done <- n
+		sent <- n
 	}()
 	go func() {
 		n, _ := io.Copy(client, up)
-		done <- n
+		recv <- n
 	}()
 
-	a := <-done
-	b := <-done
-
-	return a + b
+	return <-sent, <-recv
 }

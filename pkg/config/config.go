@@ -60,6 +60,7 @@ type Upstream struct {
 	Server     string `json:"server,omitempty"     yaml:"server,omitempty"     jsonschema:"description=openconnect: VPN gateway URL"`
 	Protocol   string `json:"protocol,omitempty"   yaml:"protocol,omitempty"   jsonschema:"enum=f5,enum=anyconnect,enum=nc,enum=gp,enum=pulse,enum=fortinet,enum=array,default=f5"`
 	ServerCert string `json:"serverCert,omitempty" yaml:"serverCert,omitempty" jsonschema:"description=openconnect: pinned server certificate (pin-sha256:...), passed as --servercert"`
+	Tun        bool   `json:"tun,omitempty"        yaml:"tun,omitempty"        jsonschema:"description=openconnect: run openconnect as root with a kernel tun via sudo -n instead of the rootless ocproxy mode (default false)"`
 }
 
 // UpstreamAuth carries optional username/password for SOCKS5 (RFC 1929) or

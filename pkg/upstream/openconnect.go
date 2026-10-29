@@ -11,7 +11,10 @@ import (
 
 // OpenConnectDialer dials targets through a rootless openconnect VPN: the
 // SOCKS5 port of the ocproxy it runs. The VPN is started lazily on first
-// Dial; hostnames are resolved by the VPN's DNS.
+// Dial; hostnames are resolved by the VPN's DNS. In tun mode (Upstream.Tun)
+// the VPN is a kernel tun instead and targets are dialed direct, resolved
+// with the VPN's nameservers: the kernel routes them, the system resolver
+// stays untouched.
 type OpenConnectDialer struct {
 	name string
 	cli  *openconnect.Client
@@ -36,6 +39,12 @@ func (d *OpenConnectDialer) Dial(ctx context.Context, hostPort string) (net.Conn
 	addr, err := d.cli.Get(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Tun mode: the kernel routes the dial, the VPN's nameservers resolve
+	// it (see openconnect.Client.Resolver).
+	if addr == "" {
+		return (&net.Dialer{Resolver: d.cli.Resolver()}).DialContext(ctx, "tcp", hostPort)
 	}
 
 	return NewSocks5(d.name, config.Upstream{Addr: addr, DNS: "remote"}).Dial(ctx, hostPort)
@@ -66,3 +75,7 @@ func (d *OpenConnectDialer) State() sshclient.ConnState { return d.cli.State() }
 
 // OnStateChange registers fn to run whenever State changes.
 func (d *OpenConnectDialer) OnStateChange(fn func()) { d.cli.OnStateChange(fn) }
+
+// OnDrop registers fn to run when the VPN exits on its own. See
+// openconnect.Client.OnDrop.
+func (d *OpenConnectDialer) OnDrop(fn func()) { d.cli.OnDrop(fn) }

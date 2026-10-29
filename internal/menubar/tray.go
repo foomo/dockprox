@@ -4,13 +4,16 @@ package menubar
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/foomo/dockprox/pkg/config"
+	"github.com/foomo/dockprox/pkg/openconnect"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -23,6 +26,9 @@ const probeBudget = 2 * time.Second
 // Both are local, so this only trips if the filesystem is wedged — e.g. a
 // stalled network home directory.
 const launchTimeout = 10 * time.Second
+
+// blinkInterval is how long each frame of the connecting blink shows.
+const blinkInterval = 500 * time.Millisecond
 
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
@@ -42,6 +48,11 @@ type Tray struct {
 	// probing guards against overlapping probes when the menu is opened
 	// repeatedly in quick succession.
 	probing atomic.Bool
+	// blinkStop stops the icon blink while an upstream connects; nil when
+	// not blinking. blinkOn is the frame shown. Both are only touched on
+	// the UI thread.
+	blinkStop chan struct{}
+	blinkOn   bool
 }
 
 // NewTray creates the system tray and wires it to the controller.
@@ -58,12 +69,12 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 	ctrl.OnApproval(newForeground(app, logger).set)
 
 	t.refreshAutostart()
-	t.applyIcon(ctrl.Snapshot().State)
+	t.applyIcon(ctrl.Snapshot())
 	t.rebuildMenu()
 
 	ctrl.Subscribe(func(s Status) {
 		application.InvokeAsync(func() {
-			t.applyIcon(s.State)
+			t.applyIcon(s)
 			t.rebuildMenu()
 		})
 	})
@@ -117,7 +128,7 @@ func (t *Tray) runBusy(label string, fn func() error) {
 		t.busy.Store(false)
 
 		application.InvokeAsync(func() {
-			t.applyIcon(t.ctrl.Snapshot().State)
+			t.applyIcon(t.ctrl.Snapshot())
 			t.rebuildMenu()
 		})
 	}()
@@ -171,14 +182,64 @@ func (t *Tray) refreshAutostart() {
 // the global icon for them read as the proxy restarting. Actions that do
 // change the state — Start, Stop, Restart — move the icon on their own,
 // because the controller notifies.
-func (t *Tray) applyIcon(s State) {
-	var icon []byte
-	if s == StateRunning {
-		icon = iconRunning
-	} else {
-		icon = iconStopped
+//
+// While an upstream connects (see upstreamConnecting) the icon blinks
+// between the running and stopped images instead.
+func (t *Tray) applyIcon(st Status) {
+	if upstreamConnecting(st) {
+		if t.blinkStop == nil {
+			t.blinkStop = make(chan struct{})
+			go t.blink(t.blinkStop)
+		}
+
+		return
 	}
 
+	if t.blinkStop != nil {
+		close(t.blinkStop)
+		t.blinkStop = nil
+		t.blinkOn = false
+	}
+
+	if st.State == StateRunning {
+		t.setIcon(iconRunning)
+	} else {
+		t.setIcon(iconStopped)
+	}
+}
+
+// blink flips the icon every blinkInterval until stop closes.
+func (t *Tray) blink(stop <-chan struct{}) {
+	ticker := time.NewTicker(blinkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			application.InvokeAsync(t.blinkTick)
+		}
+	}
+}
+
+// blinkTick shows the next blink frame. It runs on the UI thread; a tick
+// queued before the blink stopped finds blinkStop nil and does nothing.
+func (t *Tray) blinkTick() {
+	if t.blinkStop == nil {
+		return
+	}
+
+	t.blinkOn = !t.blinkOn
+
+	if t.blinkOn {
+		t.setIcon(iconStopped)
+	} else {
+		t.setIcon(iconRunning)
+	}
+}
+
+func (t *Tray) setIcon(icon []byte) {
 	if runtime.GOOS == "darwin" {
 		t.systray.SetTemplateIcon(icon)
 	} else {
@@ -195,11 +256,29 @@ func (t *Tray) rebuildMenu() {
 			t.logger.Warn("open releases", "err", err)
 		}
 	})
-	menu.AddSeparator()
 
 	if snap.State == StateError && snap.LastError != nil {
-		menu.Add(fmt.Sprintf("Error: %s", snap.LastError)).SetEnabled(false)
+		menu.Add(fmt.Sprintf("⚠️ %s", snap.LastError)).SetEnabled(false)
 	}
+
+	// Tun mode needs a sudoers drop-in, and Start fails for lack of it.
+	// Install it one-time through the macOS authorization dialog, then
+	// Start again.
+	if errors.Is(snap.LastError, openconnect.ErrSudoers) {
+		menu.Add("🔐 Install VPN sudoers…").OnClick(func(_ *application.Context) {
+			t.runBusy("install sudoers", func() error {
+				if err := openconnect.InstallSudoersGUI(context.Background()); err != nil {
+					return err
+				}
+
+				return t.ctrl.Start()
+			})
+		})
+	}
+
+	menu.AddSeparator()
+
+	menu.Add("☎︎ Listeners").SetEnabled(false)
 
 	if snap.ListenAddr != "" {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
@@ -235,6 +314,7 @@ func (t *Tray) rebuildMenu() {
 	// disconnect (see upstreamRow), then forwards.
 	if len(snap.Upstreams)+len(snap.Forwards) > 0 {
 		menu.AddSeparator()
+		menu.Add("⬆︎ Upstreams").SetEnabled(false)
 	}
 
 	for _, us := range snap.Upstreams {
@@ -263,6 +343,11 @@ func (t *Tray) rebuildMenu() {
 	// accepts a connection. They have nothing to connect or disconnect, so
 	// the rows are informational only.
 	up := t.forwardUp.Load()
+
+	if len(snap.Forwards) > 0 {
+		menu.AddSeparator()
+		menu.Add("➡︎ Forwards").SetEnabled(false)
+	}
 
 	for _, fs := range snap.Forwards {
 		// "?" until the first probe returns, so an unprobed forward is not
@@ -376,6 +461,15 @@ func (t *Tray) rebuildMenu() {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
+
+	// Only once tun mode's drop-in is installed; see openconnect.SudoersPath.
+	if _, err := os.Stat(openconnect.SudoersPath); err == nil {
+		settings.Add("↗ Reveal sudoers in Finder").OnClick(func(_ *application.Context) {
+			if err := RevealInFinder(context.Background(), openconnect.SudoersPath); err != nil {
+				t.logger.Warn("reveal", "err", err)
+			}
+		})
+	}
 
 	// Quit isolated at the bottom.
 	menu.AddSeparator()

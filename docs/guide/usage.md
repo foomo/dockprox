@@ -250,3 +250,54 @@ echo "$PASSWORD" | openconnect --protocol=f5 --user me --passwd-on-stdin --non-i
   --script-tun --script 'ocproxy -D 11080' https://vpn.example.com
 curl --socks5-hostname 127.0.0.1:11080 http://intranet.example.com
 ```
+
+### Kernel tun mode
+
+ocproxy's userspace TCP stack runs TCP over TCP when the VPN has no DTLS,
+and under a bulk upload it freezes for a minute at a time. The kernel's
+TCP stack over a real tun degrades gracefully instead. `tun: true` trades
+the rootless setup for that: dockprox runs
+
+```sh
+sudo -n openconnect --user me ...
+```
+
+so openconnect brings up a kernel tun, and matched hosts are dialed
+directly; the kernel routes them through the tun. Unlike ocproxy mode,
+the routes are not contained in dockprox: openconnect's vpnc-script
+applies the VPN's split routes system-wide while the tunnel is up, and
+removes them when it logs out. DNS stays contained: dockprox runs
+vpnc-script without the VPN's nameservers, so the system resolver is left
+alone, and resolves matched hosts with those nameservers itself. Public
+names keep resolving publicly, as in ocproxy mode.
+
+```yaml
+upstreams:
+  vpn:
+    type: openconnect
+    server: https://vpn.example.com
+    tun: true
+    auth:
+      username: me
+      password: secret
+```
+
+`sudo -n` never prompts, so openconnect and `kill` (which stops it) need
+a passwordless sudoers entry. Install it once, either from the terminal:
+
+```sh
+dockprox tun install
+```
+
+or from the menu bar: Settings > Install VPN sudoers. Both ask for your
+password once and write `/etc/sudoers.d/dockprox`, validated by `visudo`:
+
+```
+me ALL=(root) NOPASSWD: /opt/homebrew/bin/openconnect, /bin/kill
+```
+
+Delete that file to undo. Note that the `kill` entry is unrestricted: with
+it, your user can signal any root process without a password.
+
+ocproxy is not needed in this mode. The VPN password still goes to
+openconnect on stdin, not on the command line.

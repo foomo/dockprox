@@ -67,6 +67,7 @@ func TestSocks5Dialer_Auth_OK(t *testing.T) {
 
 func TestSocks5Dialer_Auth_SecretRef(t *testing.T) {
 	prev := secret.Default()
+
 	secret.SetDefault(secret.New(secret.WithCmd()))
 	t.Cleanup(func() { secret.SetDefault(prev) })
 

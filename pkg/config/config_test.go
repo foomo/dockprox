@@ -257,7 +257,7 @@ func TestValidate_OpenConnectOK(t *testing.T) {
 			config.Rule{Match: "*.internal", Upstream: "vpn"},
 		)},
 		{"ssh via vpn", cfgWith(map[string]config.Upstream{
-			"vpn": ocUp(func(u *config.Upstream) { u.Protocol = "f5"; u.ServerCert = "pin-sha256:abc" }),
+			"vpn": ocUp(func(u *config.Upstream) { u.Protocol = "f5"; u.ServerCert = "pin-sha256:abc"; u.Tun = true }),
 			"j":   sshUp(func(u *config.Upstream) { u.Via = "vpn" }),
 		}, config.Rule{Match: "*.internal", Upstream: "j"})},
 	}
@@ -296,6 +296,9 @@ func TestValidate_OpenConnectErrors(t *testing.T) {
 		{"server on socks5", cfgWith(
 			map[string]config.Upstream{"j": {Type: "socks5", Addr: "127.0.0.1:1", Server: "https://x"}},
 		), "server"},
+		{"tun on socks5", cfgWith(
+			map[string]config.Upstream{"j": {Type: "socks5", Addr: "127.0.0.1:1", Tun: true}},
+		), "tun"},
 		{"via on socks5", cfgWith(
 			map[string]config.Upstream{"j": {Type: "socks5", Addr: "127.0.0.1:1", Via: "x"}},
 		), "via"},

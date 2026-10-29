@@ -40,6 +40,7 @@ upstreams:
       username: u
       password: op://Work/VPN/password # secret reference, see below
     serverCert: pin-sha256:...  # optional
+    tun: false                  # true: kernel tun via sudo -n instead of rootless ocproxy, see usage
 
   cluster-a:
     type: forward

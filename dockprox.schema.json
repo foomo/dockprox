@@ -211,6 +211,10 @@
         "serverCert": {
           "type": "string",
           "description": "openconnect: pinned server certificate (pin-sha256:...)"
+        },
+        "tun": {
+          "type": "boolean",
+          "description": "openconnect: run openconnect as root with a kernel tun via sudo -n instead of the rootless ocproxy mode (default false)"
         }
       },
       "additionalProperties": false,
