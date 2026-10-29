@@ -21,7 +21,7 @@ updates:
       default-days: 7
 
   - package-ecosystem: docker
-    commit-message: { prefix: BKSDEV-1 chore(docker) }
+    commit-message: { prefix: chore(docker) }
     directories: [ "**/*" ]
     schedule:
       day: sunday
@@ -41,7 +41,7 @@ updates:
       default-days: 7
 
   - package-ecosystem: gomod
-    commit-message: { prefix: BKSDEV-1 chore(gomod) }
+    commit-message: { prefix: chore(gomod) }
     directories: [ "**/*" ]
     schedule:
       day: sunday
