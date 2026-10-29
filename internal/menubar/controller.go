@@ -172,6 +172,10 @@ type tunnelHandle struct {
 	reg      *upstream.Registry
 	matcher  *match.Matcher
 	logger   *log.Logger
+	// stopped is set by StopTunnel and cleared by StartTunnel. A tunnel
+	// pinned to an upstream with a connection listens only while it is not
+	// stopped and that upstream is connected; see syncTunnels.
+	stopped bool
 
 	srv    listener.Server
 	ctx    context.Context //nolint:containedctx // supervisor handle: paired with cancel for later teardown, never threaded through calls
@@ -200,6 +204,8 @@ type ProxyController struct {
 	// manualOnly is the inverse of the autoconnect setting, so the zero
 	// value keeps connecting on demand; see SetAutoconnect.
 	manualOnly atomic.Bool
+	// syncMu serializes syncTunnels runs.
+	syncMu sync.Mutex
 }
 
 // New returns a stopped controller bound to cfgPath.
@@ -315,13 +321,23 @@ func (c *ProxyController) Start() error {
 
 	// Repaint on every connection state change, not only on menu clicks:
 	// connections also open lazily from proxied requests, and the
-	// approval-pending state appears in the middle of an SSH dial.
+	// approval-pending state appears in the middle of an SSH dial. The
+	// tunnels pinned to a connection follow it up and down.
 	for _, name := range connNames(cfg) {
 		switch d := c.connDialer(reg, name).(type) {
 		case *upstream.SSHDialer:
-			d.OnStateChange(c.sshStateChanged(d.State))
+			changed := c.sshStateChanged(d.State)
+			d.OnStateChange(func() {
+				changed()
+
+				go c.syncTunnels(reg)
+			})
 		case *upstream.OpenConnectDialer:
-			d.OnStateChange(c.notify)
+			d.OnStateChange(func() {
+				c.notify()
+
+				go c.syncTunnels(reg)
+			})
 			d.OnDrop(c.upstreamDropped(reg, name))
 		}
 	}
@@ -344,7 +360,9 @@ func (c *ProxyController) Start() error {
 		"rules", len(cfg.Rules), "tunnels", len(tunnels))
 
 	for _, h := range tunnels {
-		c.serveTunnel(h, h.ctx)
+		if h.srv != nil {
+			c.serveTunnel(h, h.ctx)
+		}
 	}
 
 	c.applyAutoconnect(reg, cfg)
@@ -389,9 +407,11 @@ func (c *ProxyController) Start() error {
 	return nil
 }
 
-// buildTunnels binds every configured listener (SOCKS5 or TCP forward),
+// buildTunnels sets up every configured listener (SOCKS5 or TCP forward),
 // keyed by its configured listen address. A pinned listener is bound to its
-// upstream's dialer; an unpinned one routes by m.
+// upstream's dialer; an unpinned one routes by m. A listener pinned to an
+// upstream with a connection is not bound yet: syncTunnels binds it once
+// that upstream is connected.
 func buildTunnels(
 	ctx context.Context,
 	cfg *config.Config,
@@ -402,22 +422,9 @@ func buildTunnels(
 	tunnels := make(map[string]*tunnelHandle)
 
 	for _, l := range cfg.Listeners {
-		tctx, tcancel := context.WithCancel(ctx)
-
-		srv, err := listener.New(tctx, l, reg, m, logger)
-		if err != nil {
-			tcancel()
-
-			for _, h := range tunnels {
-				_ = h.srv.Close()
-			}
-
-			return nil, errors.Wrapf(err, "listener %q", l.Listen)
-		}
-
 		d, _ := reg.Get(l.Upstream)
 
-		tunnels[l.Listen] = &tunnelHandle{
+		h := &tunnelHandle{
 			name:     l.Listen,
 			upstream: l.Upstream,
 			dialer:   d,
@@ -425,19 +432,41 @@ func buildTunnels(
 			reg:      reg,
 			matcher:  m,
 			logger:   logger,
-			srv:      srv,
-			ctx:      tctx,
-			cancel:   tcancel,
-			done:     make(chan struct{}),
 		}
+
+		tunnels[l.Listen] = h
+
+		if _, ok := d.(connDialer); ok {
+			continue
+		}
+
+		tctx, tcancel := context.WithCancel(ctx)
+
+		srv, err := listener.New(tctx, l, reg, m, logger)
+		if err != nil {
+			tcancel()
+
+			for _, h := range tunnels {
+				if h.srv != nil {
+					_ = h.srv.Close()
+				}
+			}
+
+			return nil, errors.Wrapf(err, "listener %q", l.Listen)
+		}
+
+		h.srv = srv
+		h.ctx = tctx //nolint:fatcontext // one context per tunnel, not nested across iterations
+		h.cancel = tcancel
+		h.done = make(chan struct{})
 	}
 
 	return tunnels, nil
 }
 
-// StopTunnel stops the named tunnel's SOCKS5 listener only. The HTTP proxy
-// and other tunnels are unaffected. Idempotent if the tunnel is already
-// stopped.
+// StopTunnel stops the named tunnel's SOCKS5 listener only, and keeps it
+// stopped until StartTunnel. The HTTP proxy and other tunnels are
+// unaffected. Idempotent if the tunnel is already stopped.
 func (c *ProxyController) StopTunnel(name string) error {
 	c.mu.Lock()
 
@@ -447,39 +476,19 @@ func (c *ProxyController) StopTunnel(name string) error {
 		return errors.Errorf("tunnel %q: unknown", name)
 	}
 
-	cancel := h.cancel
-	done := h.done
+	h.stopped = true
 	c.mu.Unlock()
 
-	if cancel == nil {
-		return nil
-	}
-
-	cancel()
-
-	if !waitDone([]chan struct{}{done}, ShutdownTimeout) {
-		c.logger.Warn("stop tunnel", "name", name, "err", errShutdownTimeout)
-
-		return errors.Wrapf(errShutdownTimeout, "tunnel %q", name)
-	}
-
-	return nil
+	return c.unbindTunnel(h)
 }
 
-// StartTunnel rebinds the named tunnel's SOCKS5 listener, reusing the same
-// upstream's dialer (and its underlying SSH connection state) from the
-// running registry, and brings up its pinned upstream chain (an ssh session
-// and its via VPN, or a VPN) in the background, even with autoconnect
-// off. Idempotent if already running.
-//
-// The listener binds synchronously — that is fast and its failure is what
-// callers need reported — while the upstream is brought up in a
-// goroutine, because that dial can block for a TCP connect plus handshake
-// and, with an agent that asks for confirmation, for as long as it takes
-// the user to approve. StartTunnel therefore returns as soon as the tunnel
-// is accepting connections; a failed dial is logged and leaves the tunnel
-// listening, with connections falling back to the lazy dial they have
-// always used.
+// StartTunnel undoes a StopTunnel. A tunnel pinned to an upstream with a
+// connection (an ssh session or a VPN) listens only while that upstream is
+// connected, the way an ssh upstream only connects through a connected
+// via: StartTunnel brings the upstream up in the background, even with
+// autoconnect off, and syncTunnels binds the listener once it is
+// connected. A failed connect leaves the tunnel stopped. Any other tunnel
+// binds right away. Idempotent if already running.
 func (c *ProxyController) StartTunnel(name string) error {
 	c.mu.Lock()
 
@@ -494,34 +503,17 @@ func (c *ProxyController) StartTunnel(name string) error {
 		return errors.Errorf("tunnel %q: unknown", name)
 	}
 
-	if h.srv != nil {
-		c.mu.Unlock()
+	h.stopped = false
+	baseCtx, reg := c.baseCtx, c.reg
+	c.mu.Unlock()
+
+	if d, ok := h.dialer.(connDialer); ok {
+		c.connectTunnel(h, d, baseCtx, reg)
+
 		return nil
 	}
 
-	baseCtx := c.baseCtx
-	c.mu.Unlock()
-
-	tctx, tcancel := context.WithCancel(baseCtx)
-
-	srv, err := listener.New(tctx, h.listener, h.reg, h.matcher, h.logger)
-	if err != nil {
-		tcancel()
-		return errors.Wrapf(err, "tunnel %q", name)
-	}
-
-	c.mu.Lock()
-	h.srv = srv
-	h.ctx = tctx
-	h.cancel = tcancel
-	h.done = make(chan struct{})
-	c.mu.Unlock()
-
-	c.serveTunnel(h, tctx)
-	c.notify()
-	c.connectTunnel(h, tctx)
-
-	return nil
+	return c.bindTunnel(h, baseCtx)
 }
 
 // Stop cancels the proxy and every still-running tunnel. Returns nil if
@@ -632,8 +624,9 @@ func (c *ProxyController) ConnectUpstream(name string) error {
 // connect in flight, and keeps it closed until ConnectUpstream: requests
 // routed through it fail rather than silently reconnecting and prompting
 // for another approval. Its dependents follow it down: the ssh upstreams
-// that reach their bastion through it, and the tunnels pinned to it or to
-// one of those, so none of them is left looking up while it cannot work.
+// that reach their bastion through it, and through syncTunnels the tunnels
+// pinned to it or to one of those, so none of them is left looking up
+// while it cannot work.
 func (c *ProxyController) DisconnectUpstream(name string) error {
 	d, _, err := c.conn(name)
 	if err != nil {
@@ -650,6 +643,109 @@ func (c *ProxyController) DisconnectUpstream(name string) error {
 	c.downDependents(reg, name)
 
 	return nil
+}
+
+// bindTunnel binds and serves h's listener. Idempotent if already bound.
+func (c *ProxyController) bindTunnel(h *tunnelHandle, baseCtx context.Context) error {
+	c.mu.Lock()
+	bound := h.srv != nil
+	c.mu.Unlock()
+
+	if bound {
+		return nil
+	}
+
+	tctx, tcancel := context.WithCancel(baseCtx)
+
+	srv, err := listener.New(tctx, h.listener, h.reg, h.matcher, h.logger)
+	if err != nil {
+		tcancel()
+		return errors.Wrapf(err, "tunnel %q", h.name)
+	}
+
+	c.mu.Lock()
+	h.srv = srv
+	h.ctx = tctx
+	h.cancel = tcancel
+	h.done = make(chan struct{})
+	c.mu.Unlock()
+
+	c.serveTunnel(h, tctx)
+	c.notify()
+
+	return nil
+}
+
+// unbindTunnel closes h's listener and waits for its Serve to return.
+// Idempotent if not bound.
+func (c *ProxyController) unbindTunnel(h *tunnelHandle) error {
+	c.mu.Lock()
+	cancel := h.cancel
+	done := h.done
+	c.mu.Unlock()
+
+	if cancel == nil {
+		return nil
+	}
+
+	cancel()
+
+	if !waitDone([]chan struct{}{done}, ShutdownTimeout) {
+		c.logger.Warn("stop tunnel", "name", h.name, "err", errShutdownTimeout)
+
+		return errors.Wrapf(errShutdownTimeout, "tunnel %q", h.name)
+	}
+
+	return nil
+}
+
+// syncTunnels makes every tunnel of reg's pinned to an upstream with a
+// connection listen exactly while that upstream is connected and the
+// tunnel is not stopped. It runs on every connection state change.
+func (c *ProxyController) syncTunnels(reg *upstream.Registry) {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+
+	c.mu.Lock()
+	if c.state != StateRunning || c.reg != reg {
+		c.mu.Unlock()
+		return
+	}
+
+	baseCtx := c.baseCtx
+
+	var bind, unbind []*tunnelHandle
+
+	for _, name := range slices.Sorted(maps.Keys(c.tunnels)) {
+		h := c.tunnels[name]
+
+		d, ok := h.dialer.(connDialer)
+		if !ok {
+			continue
+		}
+
+		switch up := d.State() == sshclient.ConnConnected; {
+		case up && !h.stopped && h.srv == nil:
+			bind = append(bind, h)
+		case (!up || h.stopped) && h.srv != nil:
+			unbind = append(unbind, h)
+		}
+	}
+	c.mu.Unlock()
+
+	for _, h := range unbind {
+		c.logger.Info("tunnel down", "name", h.name, "upstream", h.upstream)
+
+		_ = c.unbindTunnel(h)
+	}
+
+	for _, h := range bind {
+		c.logger.Info("tunnel up", "name", h.name, "upstream", h.upstream)
+
+		if err := c.bindTunnel(h, baseCtx); err != nil {
+			c.logger.Warn("tunnel up", "name", h.name, "err", err)
+		}
+	}
 }
 
 // upstreamDropped returns the hook for a connection of reg's that went down
@@ -671,8 +767,9 @@ func (c *ProxyController) upstreamDropped(reg *upstream.Registry, name string) f
 	}
 }
 
-// downDependents holds down the ssh upstreams that use name as via and
-// stops the tunnels pinned to name or to one of those, then repaints.
+// downDependents holds down the ssh upstreams that use name as via, then
+// repaints. The tunnels pinned to name or to one of those follow through
+// syncTunnels.
 func (c *ProxyController) downDependents(reg *upstream.Registry, name string) {
 	c.mu.Lock()
 	if c.cfg == nil || c.reg != reg {
@@ -680,11 +777,17 @@ func (c *ProxyController) downDependents(reg *upstream.Registry, name string) {
 		return
 	}
 
-	ups, tunnels := c.dependentsLocked(name)
+	var ups []string
+
+	for _, n := range connNames(c.cfg) {
+		if c.cfg.Upstreams[n].Via == name {
+			ups = append(ups, n)
+		}
+	}
 	c.mu.Unlock()
 
-	if len(ups)+len(tunnels) > 0 {
-		c.logger.Info("down dependents", "name", name, "upstreams", ups, "tunnels", tunnels)
+	if len(ups) > 0 {
+		c.logger.Info("down dependents", "name", name, "upstreams", ups)
 	}
 
 	for _, n := range ups {
@@ -693,36 +796,7 @@ func (c *ProxyController) downDependents(reg *upstream.Registry, name string) {
 		}
 	}
 
-	for _, t := range tunnels {
-		if err := c.StopTunnel(t); err != nil {
-			c.logger.Warn("down dependents", "name", name, "tunnel", t, "err", err)
-		}
-	}
-
 	c.notify()
-}
-
-// dependentsLocked returns what depends on the named upstream: the ssh
-// upstreams whose via it is, and the listening tunnels pinned to it or to
-// one of those. Via names a non-ssh upstream, so one level is the whole
-// chain. Callers must hold c.mu.
-func (c *ProxyController) dependentsLocked(name string) (ups, tunnels []string) { //nolint:nonamedreturns // two same-typed results
-	pinned := map[string]bool{name: true}
-
-	for _, n := range connNames(c.cfg) {
-		if c.cfg.Upstreams[n].Via == name {
-			ups = append(ups, n)
-			pinned[n] = true
-		}
-	}
-
-	for _, t := range slices.Sorted(maps.Keys(c.tunnels)) {
-		if h := c.tunnels[t]; h.srv != nil && pinned[h.upstream] {
-			tunnels = append(tunnels, t)
-		}
-	}
-
-	return ups, tunnels
 }
 
 // serveTunnel runs h's listener in its own goroutine, using tctx (h's own
@@ -757,36 +831,27 @@ func (c *ProxyController) serveTunnel(h *tunnelHandle, tctx context.Context) {
 	}()
 }
 
-// connectTunnel brings up h's pinned upstream in the background. Starting
-// the tunnel is a request for its whole chain, the way an ssh upstream's Up
-// brings up its via: Up clears a Down left on the upstream or its via by an
-// earlier disconnect, whether or not autoconnect is on, so the listener is
-// never left accepting while what it dials through is held down. A tunnel
-// routed by rules, or pinned to an upstream without a connection, costs
-// nothing.
-//
-// tctx is h's own context, so a StopTunnel or a whole-proxy Stop cancels an
-// in-flight dial rather than leaving it to run against a tunnel that is
-// already gone.
-func (c *ProxyController) connectTunnel(h *tunnelHandle, tctx context.Context) {
-	d, ok := h.dialer.(connDialer)
-	if !ok {
-		return
-	}
-
+// connectTunnel brings up d, h's pinned upstream, in the background, the
+// way an ssh upstream's Up brings up its via: Up clears a Down left on the
+// upstream or its via by an earlier disconnect, whether or not autoconnect
+// is on. Once Up succeeds, syncTunnels binds the listener; it runs here too
+// because an upstream that was already connected changes no state.
+func (c *ProxyController) connectTunnel(
+	h *tunnelHandle,
+	d connDialer,
+	ctx context.Context,
+	reg *upstream.Registry,
+) {
 	go func() {
-		// Up publishes its states through OnStateChange; the notify after
-		// it returns covers the outcome.
-		if err := d.Up(tctx); err != nil {
-			// Not fatal: the listener stays up and each connection
-			// retries the dial lazily. A Down racing this Up stops the
-			// tunnel through downDependents.
-			if tctx.Err() == nil && !errors.Is(err, sshclient.ErrDisconnected) &&
+		// Up publishes its states through OnStateChange.
+		if err := d.Up(ctx); err != nil {
+			if ctx.Err() == nil && !errors.Is(err, sshclient.ErrDisconnected) &&
 				!errors.Is(err, openconnect.ErrDisconnected) {
 				c.logger.Warn("connect tunnel", "name", h.name, "err", err)
 			}
 		}
 
+		c.syncTunnels(reg)
 		c.notify()
 	}()
 }
