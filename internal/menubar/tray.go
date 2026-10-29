@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -260,9 +261,24 @@ func (t *Tray) rebuildMenu() {
 		menu.Add(fmt.Sprintf("⚠️ %s", snap.LastError)).SetEnabled(false)
 	}
 
+	// Tun mode needs a sudoers drop-in, and Start fails for lack of it.
+	// Install it one-time through the macOS authorization dialog, then
+	// Start again.
+	if errors.Is(snap.LastError, openconnect.ErrSudoers) {
+		menu.Add("🔐 Install VPN sudoers…").OnClick(func(_ *application.Context) {
+			t.runBusy("install sudoers", func() error {
+				if err := openconnect.InstallSudoersGUI(context.Background()); err != nil {
+					return err
+				}
+
+				return t.ctrl.Start()
+			})
+		})
+	}
+
 	menu.AddSeparator()
 
-	menu.Add("📡 Listeners").SetEnabled(false)
+	menu.Add("☎︎ Listeners").SetEnabled(false)
 
 	if snap.ListenAddr != "" {
 		menu.Add("◉ " + snap.ListenAddr).SetEnabled(false)
@@ -298,7 +314,7 @@ func (t *Tray) rebuildMenu() {
 	// disconnect (see upstreamRow), then forwards.
 	if len(snap.Upstreams)+len(snap.Forwards) > 0 {
 		menu.AddSeparator()
-		menu.Add("🛶 Upstreams").SetEnabled(false)
+		menu.Add("⬆︎ Upstreams").SetEnabled(false)
 	}
 
 	for _, us := range snap.Upstreams {
@@ -330,7 +346,7 @@ func (t *Tray) rebuildMenu() {
 
 	if len(snap.Forwards) > 0 {
 		menu.AddSeparator()
-		menu.Add("🚸 Forwards").SetEnabled(false)
+		menu.Add("➡︎ Forwards").SetEnabled(false)
 	}
 
 	for _, fs := range snap.Forwards {
@@ -429,21 +445,6 @@ func (t *Tray) rebuildMenu() {
 		})
 	})
 
-	// Tun mode needs a sudoers drop-in, and Start fails for lack of it.
-	// Install it one-time through the macOS authorization dialog, then
-	// Start again.
-	if errors.Is(snap.LastError, openconnect.ErrSudoers) {
-		settings.Add("🔐 Install VPN sudoers…").OnClick(func(_ *application.Context) {
-			t.runBusy("install sudoers", func() error {
-				if err := openconnect.InstallSudoersGUI(context.Background()); err != nil {
-					return err
-				}
-
-				return t.ctrl.Start()
-			})
-		})
-	}
-
 	// Logs and config path: click to reveal in Finder.
 	settings.AddSeparator()
 
@@ -460,6 +461,15 @@ func (t *Tray) rebuildMenu() {
 			t.logger.Warn("reveal", "err", err)
 		}
 	})
+
+	// Only once tun mode's drop-in is installed; see openconnect.SudoersPath.
+	if _, err := os.Stat(openconnect.SudoersPath); err == nil {
+		settings.Add("↗ Reveal sudoers in Finder").OnClick(func(_ *application.Context) {
+			if err := RevealInFinder(context.Background(), openconnect.SudoersPath); err != nil {
+				t.logger.Warn("reveal", "err", err)
+			}
+		})
+	}
 
 	// Quit isolated at the bottom.
 	menu.AddSeparator()
