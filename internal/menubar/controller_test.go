@@ -705,16 +705,41 @@ func TestController_AutoconnectOffNeedsClick(t *testing.T) {
 	require.NoError(t, ctrl.Start())
 	waitUntil(t, menubar.StateRunning, ctrl)
 
-	// Restarting the listener would connect eagerly; with autoconnect off
-	// it must not.
-	require.NoError(t, ctrl.StopTunnel(listen))
-	require.NoError(t, ctrl.StartTunnel(listen))
-
+	// The listener bound at Start does not dial with autoconnect off.
 	time.Sleep(200 * time.Millisecond)
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnUnknown)
 
 	// A click still connects.
 	require.NoError(t, ctrl.ConnectUpstream("jump"))
+	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
+}
+
+func TestController_StartTunnelBringsUpHeldUpstreamWithAutoconnectOff(t *testing.T) {
+	dir := t.TempDir()
+	sshAddr, hostFP := startTestSSHServer(t)
+	listen := freePort(t)
+	cfg := writeReachableTunnelConfig(t, dir, sshAddr, hostFP, listen)
+	ctrl := menubar.New(cfg, newTestLogger())
+
+	t.Cleanup(func() { _ = ctrl.Stop() })
+
+	ctrl.SetAutoconnect(false)
+	require.NoError(t, ctrl.Start())
+	waitUntil(t, menubar.StateRunning, ctrl)
+
+	// Holding jump down stops the tunnel pinned to it.
+	require.NoError(t, ctrl.DisconnectUpstream("jump"))
+
+	for _, ts := range ctrl.Snapshot().Tunnels {
+		if ts.Name == listen {
+			require.Equal(t, menubar.TunnelStopped, ts.State)
+		}
+	}
+
+	// Starting the tunnel is a request for its chain, like an ssh
+	// upstream's Up for its via: it brings jump up even with autoconnect
+	// off, so the listener never accepts while jump is held down.
+	require.NoError(t, ctrl.StartTunnel(listen))
 	waitUpstreamConn(t, ctrl, "jump", sshclient.ConnConnected)
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/foomo/dockprox/pkg/config"
 	"github.com/foomo/dockprox/pkg/listener"
 	"github.com/foomo/dockprox/pkg/match"
+	"github.com/foomo/dockprox/pkg/openconnect"
 	"github.com/foomo/dockprox/pkg/proxy"
 	"github.com/foomo/dockprox/pkg/sshclient"
 	"github.com/foomo/dockprox/pkg/upstream"
@@ -467,11 +468,12 @@ func (c *ProxyController) StopTunnel(name string) error {
 
 // StartTunnel rebinds the named tunnel's SOCKS5 listener, reusing the same
 // upstream's dialer (and its underlying SSH connection state) from the
-// running registry, and eagerly establishes the SSH connection in the
-// background. Idempotent if already running.
+// running registry, and brings up its pinned upstream chain (an ssh session
+// and its via VPN, or a VPN) in the background, even with autoconnect
+// off. Idempotent if already running.
 //
 // The listener binds synchronously — that is fast and its failure is what
-// callers need reported — while the SSH connection is established in a
+// callers need reported — while the upstream is brought up in a
 // goroutine, because that dial can block for a TCP connect plus handshake
 // and, with an agent that asks for confirmation, for as long as it takes
 // the user to approve. StartTunnel therefore returns as soon as the tunnel
@@ -755,40 +757,32 @@ func (c *ProxyController) serveTunnel(h *tunnelHandle, tctx context.Context) {
 	}()
 }
 
-// connectTunnel establishes h's SSH connection in the background, notifying
-// when the dial starts and again when it settles, so the menu can move the
-// tunnel's glyph from idle to connecting to connected. A dialer that is not
-// SSH-backed (or a tunnel that is already connected) costs nothing: Connect
-// is idempotent.
+// connectTunnel brings up h's pinned upstream in the background. Starting
+// the tunnel is a request for its whole chain, the way an ssh upstream's Up
+// brings up its via: Up clears a Down left on the upstream or its via by an
+// earlier disconnect, whether or not autoconnect is on, so the listener is
+// never left accepting while what it dials through is held down. A tunnel
+// routed by rules, or pinned to an upstream without a connection, costs
+// nothing.
 //
 // tctx is h's own context, so a StopTunnel or a whole-proxy Stop cancels an
 // in-flight dial rather than leaving it to run against a tunnel that is
 // already gone.
 func (c *ProxyController) connectTunnel(h *tunnelHandle, tctx context.Context) {
-	sd, ok := h.dialer.(*upstream.SSHDialer)
+	d, ok := h.dialer.(connDialer)
 	if !ok {
 		return
 	}
 
-	// Starting the tunnel is a request for its whole chain: Up clears a
-	// Down left on the upstream or its via by an earlier disconnect. With
-	// autoconnect off, Connect keeps the start from dialing at all.
-	connect := sd.Connect
-	if c.Autoconnect() {
-		connect = sd.Up
-	}
-
 	go func() {
-		// Connect publishes ConnConnecting before it does anything that can
-		// block, so notifying once here paints the connecting glyph; the
-		// notify after it returns paints the outcome.
-		c.notify()
-
-		if err := connect(tctx); err != nil {
+		// Up publishes its states through OnStateChange; the notify after
+		// it returns covers the outcome.
+		if err := d.Up(tctx); err != nil {
 			// Not fatal: the listener stays up and each connection
-			// retries the dial lazily, so this is the same state the
-			// tunnel would have been in without the eager connect.
-			if tctx.Err() == nil && !errors.Is(err, sshclient.ErrDisconnected) {
+			// retries the dial lazily. A Down racing this Up stops the
+			// tunnel through downDependents.
+			if tctx.Err() == nil && !errors.Is(err, sshclient.ErrDisconnected) &&
+				!errors.Is(err, openconnect.ErrDisconnected) {
 				c.logger.Warn("connect tunnel", "name", h.name, "err", err)
 			}
 		}
