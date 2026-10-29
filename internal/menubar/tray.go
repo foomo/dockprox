@@ -26,6 +26,9 @@ const probeBudget = 2 * time.Second
 // stalled network home directory.
 const launchTimeout = 10 * time.Second
 
+// blinkInterval is how long each frame of the connecting blink shows.
+const blinkInterval = 500 * time.Millisecond
+
 // Tray binds a ProxyController to a Wails v3 system tray.
 type Tray struct {
 	app     *application.App
@@ -44,6 +47,11 @@ type Tray struct {
 	// probing guards against overlapping probes when the menu is opened
 	// repeatedly in quick succession.
 	probing atomic.Bool
+	// blinkStop stops the icon blink while an upstream connects; nil when
+	// not blinking. blinkOn is the frame shown. Both are only touched on
+	// the UI thread.
+	blinkStop chan struct{}
+	blinkOn   bool
 }
 
 // NewTray creates the system tray and wires it to the controller.
@@ -60,12 +68,12 @@ func NewTray(app *application.App, ctrl *ProxyController, logger *log.Logger, lo
 	ctrl.OnApproval(newForeground(app, logger).set)
 
 	t.refreshAutostart()
-	t.applyIcon(ctrl.Snapshot().State)
+	t.applyIcon(ctrl.Snapshot())
 	t.rebuildMenu()
 
 	ctrl.Subscribe(func(s Status) {
 		application.InvokeAsync(func() {
-			t.applyIcon(s.State)
+			t.applyIcon(s)
 			t.rebuildMenu()
 		})
 	})
@@ -119,7 +127,7 @@ func (t *Tray) runBusy(label string, fn func() error) {
 		t.busy.Store(false)
 
 		application.InvokeAsync(func() {
-			t.applyIcon(t.ctrl.Snapshot().State)
+			t.applyIcon(t.ctrl.Snapshot())
 			t.rebuildMenu()
 		})
 	}()
@@ -173,14 +181,64 @@ func (t *Tray) refreshAutostart() {
 // the global icon for them read as the proxy restarting. Actions that do
 // change the state — Start, Stop, Restart — move the icon on their own,
 // because the controller notifies.
-func (t *Tray) applyIcon(s State) {
-	var icon []byte
-	if s == StateRunning {
-		icon = iconRunning
-	} else {
-		icon = iconStopped
+//
+// While an upstream connects (see upstreamConnecting) the icon blinks
+// between the running and stopped images instead.
+func (t *Tray) applyIcon(st Status) {
+	if upstreamConnecting(st) {
+		if t.blinkStop == nil {
+			t.blinkStop = make(chan struct{})
+			go t.blink(t.blinkStop)
+		}
+
+		return
 	}
 
+	if t.blinkStop != nil {
+		close(t.blinkStop)
+		t.blinkStop = nil
+		t.blinkOn = false
+	}
+
+	if st.State == StateRunning {
+		t.setIcon(iconRunning)
+	} else {
+		t.setIcon(iconStopped)
+	}
+}
+
+// blink flips the icon every blinkInterval until stop closes.
+func (t *Tray) blink(stop <-chan struct{}) {
+	ticker := time.NewTicker(blinkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			application.InvokeAsync(t.blinkTick)
+		}
+	}
+}
+
+// blinkTick shows the next blink frame. It runs on the UI thread; a tick
+// queued before the blink stopped finds blinkStop nil and does nothing.
+func (t *Tray) blinkTick() {
+	if t.blinkStop == nil {
+		return
+	}
+
+	t.blinkOn = !t.blinkOn
+
+	if t.blinkOn {
+		t.setIcon(iconStopped)
+	} else {
+		t.setIcon(iconRunning)
+	}
+}
+
+func (t *Tray) setIcon(icon []byte) {
 	if runtime.GOOS == "darwin" {
 		t.systray.SetTemplateIcon(icon)
 	} else {

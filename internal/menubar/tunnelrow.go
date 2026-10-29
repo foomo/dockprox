@@ -81,3 +81,19 @@ func upstreamRow(us UpstreamStatus) (glyph, label string, connect bool) { //noli
 
 	return "○", prefix + "disconnected", true
 }
+
+// upstreamConnecting reports whether the proxy is running and any upstream
+// is mid-connect, which makes the tray icon blink.
+func upstreamConnecting(st Status) bool {
+	if st.State != StateRunning {
+		return false
+	}
+
+	for _, us := range st.Upstreams {
+		if us.ConnState == sshclient.ConnConnecting || us.ConnState == sshclient.ConnAwaitingApproval {
+			return true
+		}
+	}
+
+	return false
+}
