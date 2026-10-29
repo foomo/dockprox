@@ -69,7 +69,7 @@ updates:
 
   - package-ecosystem: bun
     commit-message: { prefix: chore(bun) }
-    directory: "/"
+    directories: [ "**/*" ]
     schedule:
       day: sunday
       interval: weekly
