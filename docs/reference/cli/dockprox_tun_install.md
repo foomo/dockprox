@@ -4,7 +4,7 @@ Install the sudoers drop-in that tun mode needs
 
 ### Synopsis
 
-Writes /etc/sudoers.d/dockprox so that openconnect (to start the VPN) and kill (to stop it) run as root without a password for the current user. sudo asks for your password once. Delete the file to undo.
+Writes /etc/sudoers.d/dockprox so that openconnect (to start the VPN) kill (to stop it) and, on macOS, route limited to deleting a host route (to clear a stale VPN gateway route) run as root without a password for the current user. sudo asks for your password once. Delete the file to undo.
 
 ```
 dockprox tun install [flags]

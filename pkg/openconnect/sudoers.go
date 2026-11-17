@@ -17,16 +17,17 @@ import (
 const SudoersPath = "/etc/sudoers.d/dockprox"
 
 // Sudoers returns the drop-in content tun mode needs: passwordless root
-// for openconnect (to start the VPN) and kill (to stop it) for the current
-// user. Note that kill is unrestricted, so this user can then signal any
-// root process without a password.
+// for openconnect (to start the VPN), kill (to stop it) and, on macOS,
+// route limited to deleting a host route (to clear a stale gateway route)
+// for the current user. Note that kill is unrestricted, so this user can
+// then signal any root process without a password.
 func Sudoers() (string, error) {
 	oc, err := lookPath("openconnect")
 	if err != nil {
 		return "", err
 	}
 
-	_, kill, err := sudoBins()
+	_, kill, route, err := sudoBins()
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +37,7 @@ func Sudoers() (string, error) {
 		return "", errors.Wrap(err, "current user")
 	}
 
-	return me.Username + " ALL=(root) NOPASSWD: " + oc + ", " + kill + "\n", nil
+	return me.Username + " ALL=(root) NOPASSWD: " + strings.Join(rootCommands(oc, kill, route), ", ") + "\n", nil
 }
 
 // InstallSudoers writes the drop-in through an interactive sudo, which
@@ -78,13 +79,13 @@ func install(ctx context.Context, run func(sudo, script string) error) error {
 	}
 
 	oc, _ := lookPath("openconnect")
-	sudo, kill, _ := sudoBins()
+	sudo, kill, route, _ := sudoBins()
 
 	if err := run(sudo, installScript(content)); err != nil {
 		return errors.Wrap(err, "install sudoers")
 	}
 
-	if err := checkSudo(ctx, sudo, oc, kill); err != nil {
+	if err := checkSudo(ctx, sudo, oc, kill, route); err != nil {
 		return errors.Errorf("%s is installed but sudo still asks for a password: /etc/sudoers needs an \"@includedir %s\" line", SudoersPath, filepath.Dir(SudoersPath))
 	}
 

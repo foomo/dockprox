@@ -2,11 +2,15 @@ package openconnect
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,15 +61,19 @@ var searchDirs = []string{"/opt/homebrew/bin", "/usr/local/bin"}
 type Client struct {
 	openconnect string
 	// ocproxy runs the VPN rootless; tun, sudo, kill and vpncScript run it
-	// as root with a kernel tun instead (config.Upstream.Tun).
-	ocproxy    string
-	tun        bool
-	sudo       string
-	kill       string
-	vpncScript string
-	args       []string
-	username   string
-	password   string
+	// as root with a kernel tun instead (config.Upstream.Tun). route, macOS
+	// only, deletes the gateway route a tun session left behind, which
+	// gatewayFile names; see clearStaleRoute.
+	ocproxy     string
+	tun         bool
+	sudo        string
+	kill        string
+	route       string
+	vpncScript  string
+	gatewayFile string
+	args        []string
+	username    string
+	password    string
 
 	ctx    context.Context //nolint:containedctx // cancelled by Close to abort an in-flight start
 	cancel context.CancelFunc
@@ -119,18 +127,22 @@ func New(u config.Upstream) (*Client, error) {
 		return nil, err
 	}
 
-	var ocp, sudo, kill, vpnc string
+	var ocp, sudo, kill, route, vpnc, gwFile string
 
 	if u.Tun {
-		if sudo, kill, err = sudoBins(); err != nil {
+		if sudo, kill, route, err = sudoBins(); err != nil {
 			return nil, err
 		}
 
-		if err = checkSudo(context.Background(), sudo, oc, kill); err != nil {
+		if err = checkSudo(context.Background(), sudo, oc, kill, route); err != nil {
 			return nil, err
 		}
 
 		if vpnc, err = defaultVpncScript(context.Background(), oc); err != nil {
+			return nil, err
+		}
+
+		if gwFile, err = gatewayFile(u.Server); err != nil {
 			return nil, err
 		}
 	} else if ocp, err = lookPath("ocproxy"); err != nil {
@@ -155,7 +167,9 @@ func New(u config.Upstream) (*Client, error) {
 		tun:         u.Tun,
 		sudo:        sudo,
 		kill:        kill,
+		route:       route,
 		vpncScript:  vpnc,
+		gatewayFile: gwFile,
 		args:        append(args, u.Server),
 		username:    u.Auth.Username,
 		password:    u.Auth.Password,
@@ -346,6 +360,8 @@ func (c *Client) start(ctx context.Context) (*process, error) {
 		return nil, errors.Wrap(err, "password")
 	}
 
+	c.clearStaleRoute()
+
 	p, err := c.newProcess(ctx, username)
 	if err != nil {
 		return nil, err
@@ -426,7 +442,7 @@ func (c *Client) newProcess(ctx context.Context, username string) (*process, err
 		// instead of hanging on a password. It passes stdin through, so the
 		// VPN password still arrives on openconnect's stdin.
 		p.dir = dir
-		p.cmd = exec.CommandContext(c.ctx, c.sudo, append([]string{"-n", c.openconnect, "--script", tunScript(c.vpncScript, filepath.Join(dir, "dns")), "--user", username}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
+		p.cmd = exec.CommandContext(c.ctx, c.sudo, append([]string{"-n", c.openconnect, "--script", tunScript(c.vpncScript, filepath.Join(dir, "dns"), c.gatewayFile), "--user", username}, c.args...)...) //nolint:gosec,contextcheck // binaries from lookPath, args from config; ctx deliberately not inherited
 		// Own process group: SIGKILL cannot be relayed by sudo, so the kill
 		// goes to the group, which holds sudo and openconnect.
 		p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -531,13 +547,63 @@ func (c *Client) signal(p *process, sig syscall.Signal) error {
 
 // tunScript wraps vpncScript for --script: it runs it without the VPN's
 // nameservers, so the system resolver is left alone, and once the tunnel is
-// configured writes those nameservers to dnsFile for DNS. openconnect runs
+// configured writes those nameservers to dnsFile for DNS. It also keeps the
+// VPN gateway in gwFile from connect until disconnect, so a session that
+// never reached disconnect leaves it for clearStaleRoute. openconnect runs
 // the script through /bin/sh.
-func tunScript(vpncScript, dnsFile string) string {
+func tunScript(vpncScript, dnsFile, gwFile string) string {
 	return "dns=$INTERNAL_IP4_DNS; unset INTERNAL_IP4_DNS INTERNAL_IP6_DNS; " +
 		shellQuote(vpncScript) + "; rc=$?; " +
-		"[ \"$reason\" = connect ] && printf '%s\\n' \"$dns\" > " + shellQuote(dnsFile) + "; " +
-		"exit $rc"
+		"case \"$reason\" in " +
+		"connect) printf '%s\\n' \"$VPNGATEWAY\" > " + shellQuote(gwFile) + "; printf '%s\\n' \"$dns\" > " + shellQuote(dnsFile) + ";; " +
+		"disconnect) rm -f " + shellQuote(gwFile) + ";; " +
+		"esac; exit $rc"
+}
+
+// gatewayFile is where tunScript keeps the gateway of the VPN on server. It
+// lives outside the per-process temp dir so it outlasts a dockprox crash.
+func gatewayFile(server string) (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", errors.Wrap(err, "cache dir")
+	}
+
+	dir = filepath.Join(dir, "dockprox")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", errors.Wrap(err, "cache dir")
+	}
+
+	sum := sha256.Sum256([]byte(server))
+
+	return filepath.Join(dir, "openconnect-"+hex.EncodeToString(sum[:6])+".gateway"), nil
+}
+
+// clearStaleRoute deletes the host route to the VPN gateway that the last
+// tun session added and never removed, because it ended without
+// vpnc-script's disconnect (stop timed out into SIGKILL, dockprox crashed).
+// That route points at the network of its time; after a network change
+// openconnect cannot reach the gateway through it ("Can't assign requested
+// address"). Best effort: a failure only shows in the log.
+func (c *Client) clearStaleRoute() {
+	if c.route == "" || c.gatewayFile == "" {
+		return
+	}
+
+	b, err := os.ReadFile(c.gatewayFile)
+	if err != nil {
+		return
+	}
+
+	// Root wrote the file, but the directory is ours, so it can go.
+	_ = os.Remove(c.gatewayFile)
+
+	gw, err := netip.ParseAddr(strings.TrimSpace(string(b)))
+	if err != nil {
+		return
+	}
+
+	out, err := exec.Command(c.sudo, "-n", c.route, "-n", "delete", "-host", gw.String()).CombinedOutput() //nolint:gosec,noctx // binaries from lookPath, gw parsed as an address; must not be cut short
+	log.Info("cleared stale vpn gateway route", "gateway", gw, "out", strings.TrimSpace(string(out)), "err", err)
 }
 
 // defaultVpncScript asks openconnect which vpnc-script it runs by default,
@@ -559,28 +625,57 @@ func defaultVpncScript(ctx context.Context, openconnect string) (string, error) 
 
 // ErrSudoers reports a tun mode start without the sudoers drop-in that
 // lets openconnect and kill run as root without a password.
-var ErrSudoers = errors.New("tun mode needs passwordless sudo for openconnect and kill")
+var ErrSudoers = errors.New("tun mode needs passwordless sudo for openconnect, kill and route")
 
-// sudoBins resolves sudo and kill, which tun mode runs.
-func sudoBins() (string, string, error) {
+// routeDelete is the only route invocation tun mode runs as root, and the
+// only one the sudoers drop-in allows; the host follows it.
+var routeDelete = []string{"-n", "delete", "-host"}
+
+// sudoBins resolves sudo, kill and, on macOS, route, which tun mode runs.
+// route is empty elsewhere: there the kernel drops routes through a gone
+// interface itself, and route is not always installed.
+func sudoBins() (string, string, string, error) {
 	sudo, err := lookPath("sudo")
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	kill, err := lookPath("kill")
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
-	return sudo, kill, nil
+	var route string
+	if runtime.GOOS == "darwin" {
+		if route, err = lookPath("route"); err != nil {
+			return "", "", "", err
+		}
+	}
+
+	return sudo, kill, route, nil
 }
 
-// checkSudo verifies that openconnect and kill may run as root without a
-// password, which tun mode needs to start and to stop openconnect.
-func checkSudo(ctx context.Context, sudo, openconnect, kill string) error {
-	for _, bin := range []string{openconnect, kill} {
-		if err := exec.CommandContext(ctx, sudo, "-n", "-l", bin).Run(); err != nil {
+// rootCommands are the sudoers command specs tun mode needs.
+func rootCommands(openconnect, kill, route string) []string {
+	cmds := []string{openconnect, kill}
+	if route != "" {
+		cmds = append(cmds, route+" "+strings.Join(routeDelete, " ")+" *")
+	}
+
+	return cmds
+}
+
+// checkSudo verifies that openconnect, kill and route may run as root
+// without a password, which tun mode needs to start openconnect, to stop it
+// and to clear a stale gateway route.
+func checkSudo(ctx context.Context, sudo, openconnect, kill, route string) error {
+	checks := [][]string{{openconnect}, {kill}}
+	if route != "" {
+		checks = append(checks, append(append([]string{route}, routeDelete...), "192.0.2.1"))
+	}
+
+	for _, cmd := range checks {
+		if err := exec.CommandContext(ctx, sudo, append([]string{"-n", "-l"}, cmd...)...).Run(); err != nil { //nolint:gosec // binaries from lookPath
 			return fmt.Errorf("%w: run \"dockprox tun install\" or use the menu bar's Settings > Install VPN sudoers (writes %s)", ErrSudoers, SudoersPath)
 		}
 	}

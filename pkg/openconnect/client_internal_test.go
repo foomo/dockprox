@@ -83,7 +83,7 @@ func fakeOpenconnect(mode string) {
 		// keep the tunnel up.
 		cmd := exec.Command("/bin/sh", "-c", script)
 
-		cmd.Env = append(os.Environ(), "reason=connect", "INTERNAL_IP4_DNS=10.0.0.53 10.0.0.54", "TUNDEV=utun9")
+		cmd.Env = append(os.Environ(), "reason=connect", "INTERNAL_IP4_DNS=10.0.0.53 10.0.0.54", "TUNDEV=utun9", "VPNGATEWAY=198.51.100.7")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 
 		if err := cmd.Run(); err != nil {
@@ -381,6 +381,7 @@ func fakeTunClient(t *testing.T, mode string) (*Client, string) {
 	c.sudo = sudo
 	c.kill = kill
 	c.vpncScript = vpnc
+	c.gatewayFile = filepath.Join(filepath.Dir(sudo), "gateway")
 
 	return c, logFile
 }
@@ -406,8 +407,12 @@ func TestClient_Tun_CommandLineAndReady(t *testing.T) {
 		t.Fatalf("sudo ran %q, want prefix %q", cmdline, want)
 	}
 
-	if want := "'" + c.vpncScript + "'; rc=$?; [ \"$reason\" = connect ] && printf '%s\\n' \"$dns\" > '" + filepath.Join(c.proc.dir, "dns") + "'; exit $rc --user  https://vpn.example.com\n"; !strings.Contains(cmdline, want) {
+	if want := "'" + c.vpncScript + "'; rc=$?; case \"$reason\" in connect) printf '%s\\n' \"$VPNGATEWAY\" > '" + c.gatewayFile + "'; printf '%s\\n' \"$dns\" > '" + filepath.Join(c.proc.dir, "dns") + "';; disconnect) rm -f '" + c.gatewayFile + "';; esac; exit $rc --user  https://vpn.example.com\n"; !strings.Contains(cmdline, want) {
 		t.Fatalf("sudo ran %q, want %q", cmdline, want)
+	}
+
+	if gw, err := os.ReadFile(c.gatewayFile); err != nil || string(gw) != "198.51.100.7\n" {
+		t.Fatalf("gateway file %q, %v", gw, err)
 	}
 
 	if c.Resolver() == nil {
@@ -499,6 +504,43 @@ func TestClient_Tun_KillsGroupWhenTermIgnored(t *testing.T) {
 
 	if got := sudoLog(t, logFile); !strings.Contains(got, "-n "+c.kill+" -KILL -- -"+pid+"\n") {
 		t.Fatalf("sudo log %q, want kill -KILL of group %s", got, pid)
+	}
+}
+
+// TestClient_Tun_ClearsStaleRoute: a gateway left by a session that never
+// ran disconnect is deleted through sudo route before the next start, and
+// garbage in the file is not passed on.
+func TestClient_Tun_ClearsStaleRoute(t *testing.T) {
+	c, logFile := fakeTunClient(t, "tun")
+	c.route = "/sbin/route"
+
+	if err := os.WriteFile(c.gatewayFile, []byte("198.51.100.9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Get(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := sudoLog(t, logFile)
+	if !strings.HasPrefix(got, "-n /sbin/route -n delete -host 198.51.100.9\n") {
+		t.Fatalf("sudo log %q, want route delete of the stale gateway first", got)
+	}
+
+	c.Down()
+
+	if err := os.WriteFile(c.gatewayFile, []byte("-net 0.0.0.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c.clearStaleRoute()
+
+	if strings.Count(sudoLog(t, logFile), "route") != 1 {
+		t.Fatalf("route run for an invalid gateway: %q", sudoLog(t, logFile))
+	}
+
+	if _, err := os.Stat(c.gatewayFile); !os.IsNotExist(err) {
+		t.Fatalf("gateway file kept: %v", err)
 	}
 }
 
