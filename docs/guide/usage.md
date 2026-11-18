@@ -282,8 +282,9 @@ upstreams:
       password: secret
 ```
 
-`sudo -n` never prompts, so openconnect and `kill` (which stops it) need
-a passwordless sudoers entry. Install it once, either from the terminal:
+`sudo -n` never prompts, so openconnect, `kill` (which stops it) and, on
+macOS, `route` (which clears a stale VPN gateway route) need a passwordless
+sudoers entry. Install it once, either from the terminal:
 
 ```sh
 dockprox tun install
@@ -293,8 +294,16 @@ or from the menu bar: Settings > Install VPN sudoers. Both ask for your
 password once and write `/etc/sudoers.d/dockprox`, validated by `visudo`:
 
 ```
-me ALL=(root) NOPASSWD: /opt/homebrew/bin/openconnect, /bin/kill
+me ALL=(root) NOPASSWD: /opt/homebrew/bin/openconnect, /bin/kill, /sbin/route -n delete -host *
 ```
+
+The `route` entry only allows deleting a host route. openconnect routes
+its gateway through the network you were on when it connected, and only
+removes that route when it exits cleanly. If it is killed instead (a stop
+that times out, a dockprox crash), the route stays. After a network change
+it points nowhere, and the next connect fails with "Can't assign requested
+address". dockprox remembers the gateway and deletes such a leftover route
+before the next tun start.
 
 Delete that file to undo. Note that the `kill` entry is unrestricted: with
 it, your user can signal any root process without a password.

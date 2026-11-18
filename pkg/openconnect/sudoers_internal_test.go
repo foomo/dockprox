@@ -52,10 +52,18 @@ func TestInstallSudoers(t *testing.T) {
 	// content ends in a newline), then the verification of both binaries.
 	calls := strings.Split(strings.TrimSpace(sudoLog(t, logFile)), "\n")
 	oc, _ := lookPath("openconnect")
-	_, kill, _ := sudoBins()
+	_, kill, route, _ := sudoBins()
 
-	if len(calls) != 4 || !strings.HasPrefix(calls[0], "sh -c set -e;") || !strings.Contains(calls[1], SudoersPath) ||
-		calls[2] != "-n -l "+oc || calls[3] != "-n -l "+kill {
+	want := []string{"-n -l " + oc, "-n -l " + kill}
+	if route != "" {
+		want = append(want, "-n -l "+route+" -n delete -host 192.0.2.1")
+		if !strings.Contains(calls[1], route+" -n delete -host *") {
+			t.Fatalf("drop-in lacks the route line: %q", calls[1])
+		}
+	}
+
+	if len(calls) != 2+len(want) || !strings.HasPrefix(calls[0], "sh -c set -e;") || !strings.Contains(calls[1], SudoersPath) ||
+		strings.Join(calls[2:], "\n") != strings.Join(want, "\n") {
 		t.Fatalf("sudo calls: %q", calls)
 	}
 }
