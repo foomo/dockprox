@@ -4,7 +4,7 @@ on:
   pull_request:
   workflow_call:
   workflow_dispatch:
-    
+
 permissions:
   contents: read
 
@@ -23,11 +23,16 @@ jobs:
       # https://github.com/jdx/mise-action/releases
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
 
-      # https://github.com/actions/setup-go/releases
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Setup go cache
+        # https://github.com/actions/cache/releases
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          check-latest: true
-          go-version-file: go.mod
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
+          restore-keys: |
+            go-${{ runner.os }}-
 
       # https://github.com/actions/cache/releases
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
