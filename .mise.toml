@@ -8,6 +8,8 @@ minimum_release_age = "7d"
 actionlint = "1.7.12"
 # https://mise-tools.jdx.dev/tools/bun
 bun = "1.4.4"
+# https://mise-tools.jdx.dev/tools/bun
+go = "1.27.4"
 # https://mise-tools.jdx.dev/tools/golangci-lint
 golangci-lint = "2.15.0"
 # https://mise-tools.jdx.dev/tools/goreleaser

@@ -57,8 +57,8 @@ func TestInstallSudoers(t *testing.T) {
 	want := []string{"-n -l " + oc, "-n -l " + kill}
 	if route != "" {
 		want = append(want, "-n -l "+route+" -n delete -host 192.0.2.1")
-		if !strings.Contains(calls[1], route+" -n delete -host *") {
-			t.Fatalf("drop-in lacks the route line: %q", calls[1])
+		if !strings.Contains(calls[0], route+" -n delete -host *") {
+			t.Fatalf("drop-in lacks the route line: %q", calls[0])
 		}
 	}
 
